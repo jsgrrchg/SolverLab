@@ -1,4 +1,4 @@
-//! Pruebas de integración para los 5 solvers de juegos.
+//! Integration tests for the 5 game solvers.
 
 use solver_core::common::card::{Card, Suit};
 use solver_core::*;
@@ -80,10 +80,10 @@ fn replay_tripeaks_moves(
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de integración de Spider
+// Spider integration tests
 // ═══════════════════════════════════════════
 
-// Verifica que Spider reparte un tablero válido y expone operaciones básicas.
+// Verifies that Spider deals a valid board and exposes basic operations.
 #[test]
 fn spider_deal_and_basic_ops() {
     let engine = SpiderEngine::new(1);
@@ -95,7 +95,7 @@ fn spider_deal_and_basic_ops() {
     assert_eq!(engine.completed_sets(&board), 0);
 }
 
-// Verifica que Spider rechaza un mazo con cantidad de cartas incorrecta.
+// Verifies that Spider rejects a deck with the wrong number of cards.
 #[test]
 fn spider_deal_wrong_deck_size() {
     let engine = SpiderEngine::new(1);
@@ -103,7 +103,7 @@ fn spider_deal_wrong_deck_size() {
     assert!(engine.deal(short_deck).is_err());
 }
 
-// Verifica que el progress_token tiene los 6 campos esperados y valores correctos al inicio.
+// Verifies that progress_token has the 6 expected fields and correct initial values.
 #[test]
 fn spider_progress_token_has_expected_fields() {
     let engine = SpiderEngine::new(1);
@@ -111,7 +111,7 @@ fn spider_progress_token_has_expected_fields() {
     let board = engine.deal(deck).expect("deal");
     let token = engine.progress_token(&board);
 
-    // Formato esperado: c:N|u:N|d:N|r:N|s:N|e:N
+    // Expected format: c:N|u:N|d:N|r:N|s:N|e:N
     for field in &["c:", "u:", "d:", "r:", "s:", "e:"] {
         assert!(
             token.contains(field),
@@ -121,7 +121,7 @@ fn spider_progress_token_has_expected_fields() {
         );
     }
 
-    // Al inicio: 0 sets completados, 50 cartas en stock, 0 columnas vacías.
+    // Initially: 0 completed sets, 50 cards in stock, 0 empty columns.
     assert!(
         token.contains("c:0"),
         "should start with 0 completed sets: {}",
@@ -139,14 +139,14 @@ fn spider_progress_token_has_expected_fields() {
     );
 }
 
-// Verifica que apply_move acepta movimientos válidos y rechaza inválidos.
+// Verifies that apply_move accepts valid moves and rejects invalid ones.
 #[test]
 fn spider_apply_move_valid_and_invalid() {
     let engine = SpiderEngine::new(1);
     let deck = spider_deck(1);
     let board = engine.deal(deck).expect("deal");
 
-    // dealFromStock es válido en el tablero inicial (todas las columnas tienen cartas).
+    // dealFromStock is valid on the initial board (all columns have cards).
     let deal_move = SpiderMoveDesc {
         move_type: "dealFromStock".into(),
         source: -1,
@@ -159,7 +159,7 @@ fn spider_apply_move_valid_and_invalid() {
         "dealFromStock should succeed on initial board"
     );
 
-    // El tablero debe haber cambiado (stock se redujo en 10).
+    // The board should have changed (stock was reduced by 10).
     let after = after_deal.unwrap();
     assert_ne!(
         engine.progress_token(&after),
@@ -167,7 +167,7 @@ fn spider_apply_move_valid_and_invalid() {
         "board should change after dealFromStock"
     );
 
-    // Movimiento inválido: tipo desconocido → None.
+    // Invalid move: unknown type -> None.
     let bad_type = SpiderMoveDesc {
         move_type: "teleport".into(),
         source: 0,
@@ -179,7 +179,7 @@ fn spider_apply_move_valid_and_invalid() {
         "unknown move type should return None"
     );
 
-    // Movimiento inválido: columna de origen fuera de rango → None.
+    // Invalid move: source column out of range -> None.
     let bad_source = SpiderMoveDesc {
         move_type: "columnToColumn".into(),
         source: 99,
@@ -191,7 +191,7 @@ fn spider_apply_move_valid_and_invalid() {
         "out-of-bounds source column should return None"
     );
 
-    // Movimiento inválido: card_count = 0 → None.
+    // Invalid move: card_count = 0 -> None.
     let zero_cards = SpiderMoveDesc {
         move_type: "columnToColumn".into(),
         source: 0,
@@ -204,7 +204,7 @@ fn spider_apply_move_valid_and_invalid() {
     );
 }
 
-// Verifica que last_checkpoints_adopted es > 0 después de un solve real.
+// Verifies that last_checkpoints_adopted is > 0 after a real solve.
 #[test]
 fn spider_last_checkpoints_adopted_nonzero_after_solve() {
     let engine = SpiderEngine::new(1);
@@ -213,14 +213,14 @@ fn spider_last_checkpoints_adopted_nonzero_after_solve() {
 
     let _ = engine.solve(&board, true);
 
-    // Un tablero real (no ganado inmediatamente) debe adoptar al menos 1 checkpoint.
+    // A real board (not immediately won) should adopt at least 1 checkpoint.
     assert!(
         engine.last_checkpoints_adopted() > 0,
         "solver should adopt at least one checkpoint on a real board"
     );
 }
 
-// Verifica que Spider puede ejecutar `solve` con timeout corto sin crashear (1 palo).
+// Verifies that Spider can run `solve` with a short timeout without crashing (1 suit).
 #[test]
 fn spider_solve_short_timeout() {
     let engine = SpiderEngine::new(1);
@@ -243,7 +243,7 @@ fn spider_solve_short_timeout() {
     }
 }
 
-// Verifica que Spider funciona con 2 palos: deal, solve y replay correctos.
+// Verifies that Spider works with 2 suits: correct deal, solve, and replay.
 #[test]
 fn spider_solve_2suit_short_timeout() {
     let engine = SpiderEngine::new(2);
@@ -266,7 +266,7 @@ fn spider_solve_2suit_short_timeout() {
     }
 }
 
-// Verifica que Spider funciona con 4 palos: deal, solve y replay correctos.
+// Verifies that Spider works with 4 suits: correct deal, solve, and replay.
 #[test]
 fn spider_solve_4suit_short_timeout() {
     let engine = SpiderEngine::new(4);
@@ -290,10 +290,10 @@ fn spider_solve_4suit_short_timeout() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de integración de Klondike
+// Klondike integration tests
 // ═══════════════════════════════════════════
 
-// Verifica que Klondike reparte un tablero válido y genera token de progreso.
+// Verifies that Klondike deals a valid board and generates a progress token.
 #[test]
 fn klondike_deal_and_basic_ops() {
     let engine = KlondikeEngine::new(3);
@@ -304,7 +304,7 @@ fn klondike_deal_and_basic_ops() {
     assert!(!token.is_empty());
 }
 
-// Verifica que Klondike rechaza un mazo con tamaño inválido.
+// Verifies that Klondike rejects a deck with an invalid size.
 #[test]
 fn klondike_deal_wrong_deck_size() {
     let engine = KlondikeEngine::new(3);
@@ -312,7 +312,7 @@ fn klondike_deal_wrong_deck_size() {
     assert!(engine.deal(short).is_err());
 }
 
-// Verifica que los movimientos a foundation detectados al inicio sean legales y aplicables.
+// Verifies that initial foundation moves are legal and applicable.
 #[test]
 fn klondike_find_foundation_moves_initial() {
     let engine = KlondikeEngine::new(3);
@@ -326,10 +326,10 @@ fn klondike_find_foundation_moves_initial() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de integración de FreeCell
+// FreeCell integration tests
 // ═══════════════════════════════════════════
 
-// Verifica que FreeCell reparte correctamente y el tablero inicial no es victoria.
+// Verifies that FreeCell deals correctly and the initial board is not a win.
 #[test]
 fn freecell_deal_and_basic_ops() {
     let engine = FreeCellEngine::new();
@@ -338,7 +338,7 @@ fn freecell_deal_and_basic_ops() {
     assert!(!engine.is_win(&board));
 }
 
-// Verifica que FreeCell rechaza un mazo de tamaño incorrecto.
+// Verifies that FreeCell rejects a deck with the wrong size.
 #[test]
 fn freecell_deal_wrong_deck_size() {
     let engine = FreeCellEngine::new();
@@ -347,10 +347,10 @@ fn freecell_deal_wrong_deck_size() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de integración de Pyramid
+// Pyramid integration tests
 // ═══════════════════════════════════════════
 
-// Verifica que Pyramid reparte bien y devuelve un token de progreso válido.
+// Verifies that Pyramid deals correctly and returns a valid progress token.
 #[test]
 fn pyramid_deal_and_basic_ops() {
     let engine = PyramidEngine::new();
@@ -361,7 +361,7 @@ fn pyramid_deal_and_basic_ops() {
     assert!(!token.is_empty());
 }
 
-// Verifica que Pyramid rechaza un mazo con cantidad inválida de cartas.
+// Verifies that Pyramid rejects a deck with an invalid number of cards.
 #[test]
 fn pyramid_deal_wrong_deck_size() {
     let engine = PyramidEngine::new();
@@ -369,7 +369,7 @@ fn pyramid_deal_wrong_deck_size() {
     assert!(engine.deal(short).is_err());
 }
 
-// Verifica que los movimientos greedy de Pyramid sean de rey o pareja válidos.
+// Verifies that Pyramid greedy moves are valid king or pair moves.
 #[test]
 fn pyramid_greedy_moves() {
     let engine = PyramidEngine::new();
@@ -382,10 +382,10 @@ fn pyramid_greedy_moves() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de integración de TriPeaks
+// TriPeaks integration tests
 // ═══════════════════════════════════════════
 
-// Verifica que TriPeaks reparte correctamente y reporta cartas restantes en tableau.
+// Verifies that TriPeaks deals correctly and reports remaining tableau cards.
 #[test]
 fn tripeaks_deal_and_basic_ops() {
     let engine = TriPeaksEngine::new();
@@ -396,7 +396,7 @@ fn tripeaks_deal_and_basic_ops() {
     assert!(remaining > 0);
 }
 
-// Verifica que TriPeaks rechaza un mazo con tamaño inválido.
+// Verifies that TriPeaks rejects a deck with an invalid size.
 #[test]
 fn tripeaks_deal_wrong_deck_size() {
     let engine = TriPeaksEngine::new();
@@ -405,10 +405,10 @@ fn tripeaks_deal_wrong_deck_size() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de solve (timeouts cortos para verificar que no crashee)
+// Solve tests (short timeouts to verify that nothing crashes)
 // ═══════════════════════════════════════════
 
-// Verifica que Klondike devuelve una secuencia reaplicable y con progreso observable si es parcial.
+// Verifies that Klondike returns a replayable sequence with observable progress if partial.
 #[test]
 fn klondike_solve_short_timeout() {
     let engine = KlondikeEngine::new(1);
@@ -435,7 +435,7 @@ fn klondike_solve_short_timeout() {
     }
 }
 
-// Verifica en modos Fast y Strict que cualquier secuencia devuelta por Klondike sea reaplicable.
+// Verifies in Fast and Strict modes that any sequence returned by Klondike is replayable.
 #[test]
 fn klondike_solve_fast_and_strict_modes_replay_if_any() {
     let deck = standard_deck();
@@ -454,7 +454,7 @@ fn klondike_solve_fast_and_strict_modes_replay_if_any() {
     }
 }
 
-// Verifica que FreeCell puede ejecutar `solve` con timeout corto sin errores.
+// Verifies that FreeCell can run `solve` with a short timeout without errors.
 #[test]
 fn freecell_solve_short_timeout() {
     let engine = FreeCellEngine::new();
@@ -470,7 +470,7 @@ fn freecell_solve_short_timeout() {
     }
 }
 
-// Verifica que Pyramid puede ejecutar `solve` con timeout corto y que el resultado es coherente.
+// Verifies that Pyramid can run `solve` with a short timeout and a coherent result.
 #[test]
 fn pyramid_solve_short_timeout() {
     let engine = PyramidEngine::new();
@@ -478,14 +478,14 @@ fn pyramid_solve_short_timeout() {
     let board = engine.deal(deck).expect("deal");
     let result = engine.solve(&board, 0.1, true);
     if let Some(moves) = result {
-        // Una solución vacía solo es válida si el tablero ya está ganado.
+        // An empty solution is only valid if the board is already won.
         if moves.is_empty() {
             assert!(
                 engine.is_win(&board),
                 "empty solution only valid if board is already won"
             );
         }
-        // El token de progreso siempre debe tener el campo 'r:' (restantes en pirámide).
+        // The progress token should always have the 'r:' field (remaining in pyramid).
         let token = engine.progress_token(&board);
         assert!(
             token.contains("r:"),
@@ -495,7 +495,7 @@ fn pyramid_solve_short_timeout() {
     }
 }
 
-// Verifica que TriPeaks puede ejecutar `solve` con timeout corto y que el resultado es coherente.
+// Verifies that TriPeaks can run `solve` with a short timeout and a coherent result.
 #[test]
 fn tripeaks_solve_short_timeout() {
     let engine = TriPeaksEngine::new();
@@ -504,11 +504,11 @@ fn tripeaks_solve_short_timeout() {
     let start_token = engine.progress_token(&board);
     let result = engine.solve(&board, true);
     if let Some(moves) = result {
-        // Una solución vacía solo es válida si el tablero ya está ganado.
+        // An empty solution is only valid if the board is already won.
         if moves.is_empty() {
             assert!(engine.is_win(&board));
         } else {
-            // Los movimientos deben poder reproducirse y el tablero debe cambiar.
+            // Moves should be replayable and the board should change.
             let final_board = replay_tripeaks_moves(&engine, Arc::clone(&board), &moves)
                 .expect("tripeaks solver returned a replayable sequence");
             if !engine.is_win(&final_board) {
@@ -523,10 +523,10 @@ fn tripeaks_solve_short_timeout() {
 }
 
 // ═══════════════════════════════════════════
-// Pruebas de descriptores de movimiento
+// Move descriptor tests
 // ═══════════════════════════════════════════
 
-// Verifica la clasificación de movimientos de Klondike (a/from foundation y a columna).
+// Verifies Klondike move classification (to/from foundation and to column).
 #[test]
 fn klondike_move_classification() {
     let engine = KlondikeEngine::new(3);
@@ -543,7 +543,7 @@ fn klondike_move_classification() {
     assert!(!engine.is_to_column(desc));
 }
 
-// Verifica la detección de movimientos a foundation en FreeCell.
+// Verifies foundation move detection in FreeCell.
 #[test]
 fn freecell_move_classification() {
     let engine = FreeCellEngine::new();
@@ -558,7 +558,7 @@ fn freecell_move_classification() {
     assert!(engine.is_foundation_move(desc));
 }
 
-// Verifica la clasificación de movimientos de Pyramid (rey y pareja).
+// Verifies Pyramid move classification (king and pair).
 #[test]
 fn pyramid_move_classification() {
     let engine = PyramidEngine::new();
@@ -576,7 +576,7 @@ fn pyramid_move_classification() {
     assert!(engine.is_pair_move(pair));
 }
 
-// Verifica la clasificación de movimientos de TriPeaks entre tableau y robo de stock.
+// Verifies TriPeaks move classification between tableau and stock draw.
 #[test]
 fn tripeaks_move_classification() {
     let engine = TriPeaksEngine::new();
