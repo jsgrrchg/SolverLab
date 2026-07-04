@@ -2,15 +2,15 @@ use super::board::SpiderBoard;
 use super::moves::SpiderMove;
 use super::weights;
 
-/// Una transición del solver: el tablero resultante y la jugada que lo produjo.
-/// Nota: las transiciones de Spider NO incluyen `from_board` (se pasa por separado).
+/// A solver transition: the resulting board and the move that produced it.
+/// Note: Spider transitions do NOT include `from_board` (it is passed separately).
 pub struct SpiderTransition {
     pub to_board: SpiderBoard,
     pub the_move: SpiderMove,
     pub depth: usize,
 }
 
-/// Reglas de poda de Spider como `enum` (reemplaza el protocolo de Swift).
+/// Spider pruning rules as an `enum` (replaces the Swift protocol).
 #[derive(Debug, Clone)]
 pub enum SpiderRule {
     DepthLimit {
@@ -25,7 +25,7 @@ pub enum SpiderRule {
 }
 
 impl SpiderRule {
-    /// Reglas por defecto ajustadas a la variante. Usa DFS_MAX_DEPTH de weights.
+    /// Default rules adjusted to the variant. Uses DFS_MAX_DEPTH from weights.
     pub fn default_rules(suit_count: u32) -> Vec<SpiderRule> {
         vec![
             SpiderRule::DepthLimit {
@@ -40,8 +40,8 @@ impl SpiderRule {
         ]
     }
 
-    /// Poda temprana: evalúa sin tablero resultante (antes de `apply`).
-    /// Solo `DepthLimit` y `NoImmediateUndo` soportan esta vía.
+    /// Early pruning: evaluates without the resulting board (before `apply`).
+    /// Only `DepthLimit` and `NoImmediateUndo` support this path.
     pub fn can_prune_early(
         &self,
         the_move: &SpiderMove,
@@ -77,11 +77,11 @@ impl SpiderRule {
         }
     }
 
-    /// Poda completa: evalúa con el tablero de origen y la transición resultante.
-    /// `DepthLimit` y `NoImmediateUndo` se evalúan en `can_prune_early` (antes de apply).
+    /// Full pruning: evaluates with the source board and resulting transition.
+    /// `DepthLimit` and `NoImmediateUndo` are evaluated in `can_prune_early` (before apply).
     pub fn should_prune(&self, transition: &SpiderTransition, from_board: &SpiderBoard) -> bool {
         match self {
-            // Evaluados en can_prune_early, nunca llegan aquí.
+            // Evaluated in can_prune_early; they never reach this point.
             SpiderRule::DepthLimit { .. } | SpiderRule::NoImmediateUndo => false,
 
             SpiderRule::NoopTransition => {
@@ -93,7 +93,7 @@ impl SpiderRule {
                 min_cards,
                 endgame_threshold,
             } => {
-                // Solo aplica a movimientos entre columnas hacia una columna vacía.
+                // Only applies to column-to-column moves toward an empty column.
                 let (source, destination, count) = match &transition.the_move {
                     SpiderMove::ColumnToColumn {
                         source,
@@ -104,18 +104,18 @@ impl SpiderRule {
                 };
 
                 let dest_col_before = &from_board.columns[destination];
-                // Solo aplica cuando el destino estaba vacío.
+                // Only applies when the destination was empty.
                 if !dest_col_before.is_empty() {
                     return false;
                 }
 
-                // Movimientos grandes o endgame: siempre permitidos.
+                // Large moves or endgame: always allowed.
                 if count >= *min_cards || from_board.completed_sets >= *endgame_threshold {
                     return false;
                 }
 
                 let src_col_before = &from_board.columns[source];
-                // Permite el movimiento si destapa cartas boca abajo.
+                // Allow the move if it reveals face-down cards.
                 if src_col_before.has_face_down() {
                     return false;
                 }
@@ -127,17 +127,17 @@ impl SpiderRule {
                 let after_dest_run = dest_col_after.longest_run;
                 let after_src_run = src_col_after.longest_run;
 
-                // Permite el movimiento si mejora la racha del mismo palo en cualquiera de los lados.
+                // Allow the move if it improves the same-suit run on either side.
                 if after_dest_run > before_suit_run || after_src_run > before_suit_run {
                     return false;
                 }
 
-                // Permite el movimiento si se completó una secuencia.
+                // Allow the move if a sequence was completed.
                 if transition.to_board.completed_sets > from_board.completed_sets {
                     return false;
                 }
 
-                // Poda: mover a columna vacía sin mejorar nada.
+                // Prune: moving to an empty column without improving anything.
                 true
             }
         }

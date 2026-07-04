@@ -2,33 +2,33 @@ use super::board::SpiderBoard;
 use super::column::SpiderColumn;
 use crate::common::card::Card;
 
-/// Todos los movimientos posibles en Spider.
+/// All possible Spider moves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SpiderMove {
-    /// Reparto inicial: distribuye cartas en columnas.
+    /// Initial deal: distributes cards into columns.
     Deal { deck: Vec<Card>, num_columns: usize },
-    /// Mueve una racha descendente del mismo palo de una columna a otra.
+    /// Moves a descending same-suit run from one column to another.
     ColumnToColumn {
         source: usize,
         destination: usize,
         card_count: usize,
     },
-    /// Reparte una carta del stock a cada columna.
+    /// Deals one stock card to each column.
     DealFromStock,
 }
 
 impl SpiderMove {
-    /// Indica si el movimiento es un reparto desde stock.
+    /// Indicates whether the move is a stock deal.
     pub fn is_deal_from_stock(&self) -> bool {
         matches!(self, SpiderMove::DealFromStock)
     }
 
-    /// Indica si el movimiento es entre columnas.
+    /// Indicates whether the move is between columns.
     pub fn is_column_to_column(&self) -> bool {
         matches!(self, SpiderMove::ColumnToColumn { .. })
     }
 
-    /// Devuelve la columna de origen si aplica.
+    /// Returns the source column if applicable.
     pub fn source_column(&self) -> Option<usize> {
         match self {
             SpiderMove::ColumnToColumn { source, .. } => Some(*source),
@@ -36,7 +36,7 @@ impl SpiderMove {
         }
     }
 
-    /// Devuelve la columna de destino si aplica.
+    /// Returns the destination column if applicable.
     pub fn destination_column(&self) -> Option<usize> {
         match self {
             SpiderMove::ColumnToColumn { destination, .. } => Some(*destination),
@@ -44,7 +44,7 @@ impl SpiderMove {
         }
     }
 
-    /// Cantidad de cartas movidas (0 para movimientos que no son entre columnas).
+    /// Number of moved cards (0 for moves that are not between columns).
     pub fn card_count(&self) -> usize {
         match self {
             SpiderMove::ColumnToColumn { card_count, .. } => *card_count,
@@ -52,7 +52,7 @@ impl SpiderMove {
         }
     }
 
-    /// Aplica este movimiento al tablero y devuelve el nuevo estado o `None` si es inválido.
+    /// Applies this move to the board and returns the new state, or `None` if invalid.
     pub fn apply(&self, board: &SpiderBoard) -> Option<SpiderBoard> {
         match self {
             SpiderMove::Deal { deck, num_columns } => apply_deal(deck, *num_columns),
@@ -68,11 +68,11 @@ impl SpiderMove {
                     return None;
                 }
 
-                // Extrae racha del mismo palo desde la columna de origen.
+                // Extract the same-suit run from the source column.
                 let (extracted_run, col_from) =
                     board.columns[src].extract_same_suit_run(*card_count)?;
 
-                // Verifica que el destino pueda aceptar la racha.
+                // Verify that the destination can accept the run.
                 if !board.columns[dest].can_add_run(&extracted_run) {
                     return None;
                 }
@@ -83,13 +83,13 @@ impl SpiderMove {
                 cols[dest] = col_to;
                 let mut new_completed = board.completed_sets;
 
-                // Revisa secuencias completas en la columna de destino.
+                // Check complete sequences in the destination column.
                 let (cleaned_dest, removed_dest) = cols[dest].check_and_remove_complete_sequences();
                 cols[dest] = cleaned_dest;
                 new_completed += removed_dest;
 
-                // Revisa secuencias completas en la columna de origen
-                // (al voltear una carta puede aparecer una).
+                // Check complete sequences in the source column
+                // (flipping a card can reveal one).
                 let (cleaned_src, removed_src) = cols[src].check_and_remove_complete_sequences();
                 cols[src] = cleaned_src;
                 new_completed += removed_src;
@@ -116,7 +116,7 @@ impl SpiderMove {
 
                 let mut new_completed = board.completed_sets;
 
-                // Revisa secuencias completas en todas las columnas tras repartir.
+                // Check complete sequences in all columns after dealing.
                 for i in 0..num_cols {
                     let (cleaned, removed) = cols[i].check_and_remove_complete_sequences();
                     cols[i] = cleaned;
@@ -129,10 +129,10 @@ impl SpiderMove {
     }
 }
 
-/// Aplica el reparto inicial: 104 cartas en 10 columnas.
-/// Columnas 0-3: 6 cartas cada una (5 boca abajo + 1 boca arriba).
-/// Columnas 4-9: 5 cartas cada una (4 boca abajo + 1 boca arriba).
-/// Las 50 cartas restantes van al stock.
+/// Applies the initial deal: 104 cards into 10 columns.
+/// Columns 0-3: 6 cards each (5 face-down + 1 face-up).
+/// Columns 4-9: 5 cards each (4 face-down + 1 face-up).
+/// The remaining 50 cards go to the stock.
 fn apply_deal(cards: &[Card], num_columns: usize) -> Option<SpiderBoard> {
     if cards.len() != 104 {
         return None;
@@ -152,7 +152,7 @@ fn apply_deal(cards: &[Card], num_columns: usize) -> Option<SpiderBoard> {
         }
     }
 
-    // Todas menos la última de cada pila van boca abajo; la última va boca arriba.
+    // All but the last card in each pile are face-down; the last one is face-up.
     let columns: Vec<SpiderColumn> = stacks
         .into_iter()
         .map(|stack| {
@@ -169,10 +169,10 @@ fn apply_deal(cards: &[Card], num_columns: usize) -> Option<SpiderBoard> {
     Some(SpiderBoard::new(columns, stock_pile, 0))
 }
 
-// -- Generación de movimientos --
+// -- Move generation --
 
 impl SpiderMove {
-    /// Genera todos los movimientos válidos entre columnas.
+    /// Generates all valid moves between columns.
     pub fn find_column_to_column_moves(board: &SpiderBoard) -> Vec<SpiderMove> {
         let mut moves = Vec::new();
         let cols = &board.columns;
@@ -191,10 +191,10 @@ impl SpiderMove {
             let src_fu = &src_col.face_up;
 
             for run_len in 1..=max_run_len {
-                // Obtiene la carta inferior de la racha para filtrar destinos rápido.
+                // Get the bottom card of the run to filter destinations quickly.
                 let bottom_card = src_fu[src_fu.len() - run_len];
 
-                // Verifica si existe al menos un destino válido.
+                // Check whether at least one valid destination exists.
                 let has_valid_dest = cols
                     .iter()
                     .enumerate()
@@ -211,8 +211,8 @@ impl SpiderMove {
                         continue;
                     }
 
-                    // Evita movimientos triviales: mover todo `face_up` a una columna vacía
-                    // cuando la columna origen no tiene cartas boca abajo.
+                    // Avoid trivial moves: moving all `face_up` cards to an empty column
+                    // when the source column has no face-down cards.
                     if cols[dest].is_empty() {
                         if run_len == src_col.num_face_up() && !src_col.has_face_down() {
                             continue;
@@ -231,7 +231,7 @@ impl SpiderMove {
         moves
     }
 
-    /// Genera el movimiento de reparto desde stock si es legal.
+    /// Generates the stock deal move if it is legal.
     pub fn find_deal_from_stock_moves(board: &SpiderBoard) -> Vec<SpiderMove> {
         if board.can_deal_from_stock() {
             vec![SpiderMove::DealFromStock]
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_column_to_column_move() {
-        // Prepara un tablero con una carta que puede moverse a otra columna.
+        // Prepare a board with a card that can move to another column.
         let mut cols: Vec<SpiderColumn> = (0..10).map(|_| SpiderColumn::empty()).collect();
         cols[0] = SpiderColumn::new(vec![], vec![card(Suit::Spade, 5)]);
         cols[1] = SpiderColumn::new(vec![], vec![card(Suit::Heart, 6)]);
@@ -283,7 +283,7 @@ mod tests {
         let board = SpiderBoard::new(cols, vec![], 0);
         let moves = SpiderMove::find_column_to_column_moves(&board);
 
-        // El 5 puede ir sobre el 6.
+        // The 5 can go on the 6.
         assert!(moves.iter().any(|m| {
             matches!(
                 m,

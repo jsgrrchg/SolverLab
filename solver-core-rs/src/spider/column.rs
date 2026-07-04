@@ -1,18 +1,18 @@
 use crate::common::card::Card;
 
-/// Una columna de Spider Solitaire: cartas boca abajo y cartas boca arriba.
+/// A Spider Solitaire column: face-down cards and face-up cards.
 #[derive(Debug, Clone)]
 pub struct SpiderColumn {
     pub face_down: Vec<Card>,
     pub face_up: Vec<Card>,
-    /// Cache: racha descendente más larga del mismo palo desde el tope de `face_up`.
+    /// Cache: longest descending same-suit run from the top of `face_up`.
     pub longest_run: usize,
 }
 
 impl SpiderColumn {
-    /// Crea una columna y calcula la racha descendente del mismo palo desde el tope.
+    /// Creates a column and computes the descending same-suit run from the top.
     pub fn new(face_down: Vec<Card>, face_up: Vec<Card>) -> SpiderColumn {
-        // Volteo automático: si `face_down` tiene cartas pero `face_up` está vacío, voltea la última carta.
+        // Automatic flip: if `face_down` has cards but `face_up` is empty, flip the last card.
         let mut fd = face_down;
         let mut fu = face_up;
         if !fd.is_empty() && fu.is_empty() {
@@ -27,7 +27,7 @@ impl SpiderColumn {
         }
     }
 
-    /// Construye una columna vacía.
+    /// Builds an empty column.
     pub fn empty() -> SpiderColumn {
         SpiderColumn {
             face_down: vec![],
@@ -36,42 +36,42 @@ impl SpiderColumn {
         }
     }
 
-    /// Indica si la columna no tiene cartas.
+    /// Indicates whether the column has no cards.
     pub fn is_empty(&self) -> bool {
         self.face_down.is_empty() && self.face_up.is_empty()
     }
 
-    /// Indica si la columna tiene cartas boca abajo.
+    /// Indicates whether the column has face-down cards.
     pub fn has_face_down(&self) -> bool {
         !self.face_down.is_empty()
     }
 
-    /// Indica si la columna tiene cartas boca arriba.
+    /// Indicates whether the column has face-up cards.
     pub fn has_face_up(&self) -> bool {
         !self.face_up.is_empty()
     }
 
-    /// Cantidad de cartas boca abajo.
+    /// Number of face-down cards.
     pub fn num_face_down(&self) -> usize {
         self.face_down.len()
     }
 
-    /// Cantidad de cartas boca arriba.
+    /// Number of face-up cards.
     pub fn num_face_up(&self) -> usize {
         self.face_up.len()
     }
 
-    /// Cantidad total de cartas en la columna.
+    /// Total number of cards in the column.
     pub fn total_cards(&self) -> usize {
         self.face_down.len() + self.face_up.len()
     }
 
-    /// Carta superior de `face_up`, si existe.
+    /// Top `face_up` card, if any.
     pub fn top_card(&self) -> Option<Card> {
         self.face_up.last().copied()
     }
 
-    /// Devuelve las N cartas superiores (las últimas N de `face_up`).
+    /// Returns the top N cards (the last N cards in `face_up`).
     pub fn top_cards(&self, count: usize) -> Option<Vec<Card>> {
         if count < 1 || count > self.face_up.len() {
             return None;
@@ -80,7 +80,7 @@ impl SpiderColumn {
         Some(self.face_up[start..].to_vec())
     }
 
-    /// Extrae desde el tope una racha descendente del mismo palo.
+    /// Extracts a descending same-suit run from the top.
     pub fn extract_same_suit_run(&self, count: usize) -> Option<(Vec<Card>, SpiderColumn)> {
         let run = self.top_cards(count)?;
         if !is_same_suit_descending(&run) {
@@ -90,14 +90,14 @@ impl SpiderColumn {
         Some((run, SpiderColumn::new(self.face_down.clone(), new_face_up)))
     }
 
-    /// Extrae una sola carta del tope.
+    /// Extracts a single card from the top.
     pub fn extract_card(&self) -> Option<(Card, SpiderColumn)> {
         let card = *self.face_up.last()?;
         let new_face_up = self.face_up[..self.face_up.len() - 1].to_vec();
         Some((card, SpiderColumn::new(self.face_down.clone(), new_face_up)))
     }
 
-    /// Agrega varias cartas al tope.
+    /// Adds several cards to the top.
     pub fn with_cards(&self, new_cards: &[Card]) -> Option<SpiderColumn> {
         if new_cards.is_empty() {
             return None;
@@ -107,19 +107,20 @@ impl SpiderColumn {
         Some(SpiderColumn::new(self.face_down.clone(), fu))
     }
 
-    /// Agrega una sola carta al tope.
+    /// Adds a single card to the top.
     pub fn with_card(&self, card: Card) -> SpiderColumn {
         let mut fu = self.face_up.clone();
         fu.push(card);
         SpiderColumn::new(self.face_down.clone(), fu)
     }
 
-    /// Verifica si una carta puede colocarse en esta columna.
-    /// Una columna vacía acepta cualquier carta; si no, la carta debe ser exactamente 1 valor menor al tope.
+    /// Checks whether a card can be placed in this column.
+    /// An empty column accepts any card; otherwise, the card must be exactly
+    /// 1 value lower than the top card.
     #[inline]
     pub fn can_add_card(&self, card: Card) -> bool {
         if self.face_up.is_empty() && self.face_down.is_empty() {
-            return true; // Una columna vacía acepta cualquier carta.
+            return true; // An empty column accepts any card.
         }
         match self.face_up.last() {
             Some(top) => top.value == card.value + 1,
@@ -127,7 +128,7 @@ impl SpiderColumn {
         }
     }
 
-    /// Verifica si una racha puede colocarse en esta columna.
+    /// Checks whether a run can be placed in this column.
     pub fn can_add_run(&self, run: &[Card]) -> bool {
         match run.first() {
             Some(first) => self.can_add_card(*first),
@@ -135,8 +136,8 @@ impl SpiderColumn {
         }
     }
 
-    /// Cuenta transiciones de palo en face_up (cartas adyacentes de distinto palo).
-    /// En 1-suit siempre devuelve 0. Útil para penalización de fragmentación.
+    /// Counts suit transitions in face_up (adjacent cards with different suits).
+    /// In 1-suit this always returns 0. Useful for fragmentation penalties.
     pub fn suit_transitions(&self) -> usize {
         self.face_up
             .windows(2)
@@ -144,8 +145,8 @@ impl SpiderColumn {
             .count()
     }
 
-    /// Revisa y elimina del tope secuencias completas K→A del mismo palo.
-    /// Devuelve `(nueva_columna, cantidad_de_secuencias_eliminadas)`.
+    /// Checks and removes complete same-suit K-to-A sequences from the top.
+    /// Returns `(new_column, removed_sequence_count)`.
     pub fn check_and_remove_complete_sequences(&self) -> (SpiderColumn, usize) {
         let mut current_face_up = self.face_up.clone();
         let mut current_face_down = self.face_down.clone();
@@ -159,7 +160,7 @@ impl SpiderColumn {
             current_face_up.truncate(start);
             removed_sets += 1;
 
-            // Si `face_up` queda vacío, voltea una carta desde `face_down`.
+            // If `face_up` becomes empty, flip one card from `face_down`.
             if current_face_up.is_empty() && !current_face_down.is_empty() {
                 let top = current_face_down.pop().unwrap();
                 current_face_up.push(top);
@@ -171,7 +172,7 @@ impl SpiderColumn {
     }
 }
 
-// `PartialEq` y `Hash` personalizados que excluyen el campo cacheado `longest_run`.
+// Custom `PartialEq` and `Hash` that exclude the cached `longest_run` field.
 impl PartialEq for SpiderColumn {
     fn eq(&self, other: &Self) -> bool {
         self.face_down == other.face_down && self.face_up == other.face_up
@@ -187,7 +188,7 @@ impl std::hash::Hash for SpiderColumn {
     }
 }
 
-/// Calcula la racha descendente más larga del mismo palo desde el tope (final) de `face_up`.
+/// Computes the longest descending same-suit run from the top (end) of `face_up`.
 fn compute_longest_same_suit_run(face_up: &[Card]) -> usize {
     if face_up.is_empty() {
         return 0;
@@ -206,7 +207,7 @@ fn compute_longest_same_suit_run(face_up: &[Card]) -> usize {
     length
 }
 
-/// Verifica si las cartas forman una secuencia descendente del mismo palo.
+/// Checks whether the cards form a descending same-suit sequence.
 fn is_same_suit_descending(cards: &[Card]) -> bool {
     if cards.is_empty() {
         return false;
@@ -223,7 +224,7 @@ fn is_same_suit_descending(cards: &[Card]) -> bool {
     true
 }
 
-/// Verifica in-place si 13 cartas desde `start` forman una secuencia K→A del mismo palo.
+/// Checks in place whether 13 cards from `start` form a same-suit K-to-A sequence.
 fn is_complete_sequence_in_place(cards: &[Card], start: usize) -> bool {
     if cards.len() - start < 13 {
         return false;
@@ -265,11 +266,11 @@ mod tests {
 
     #[test]
     fn test_longest_run() {
-        // K, Q, J de espadas = racha de 3.
+        // K, Q, J of Spades = run of 3.
         let col = SpiderColumn::new(
             vec![],
             vec![
-                card(Suit::Heart, 5), // No forma parte de la racha.
+                card(Suit::Heart, 5), // Not part of the run.
                 card(Suit::Spade, 13),
                 card(Suit::Spade, 12),
                 card(Suit::Spade, 11),
@@ -281,15 +282,15 @@ mod tests {
     #[test]
     fn test_can_add_card() {
         let col = SpiderColumn::new(vec![], vec![card(Suit::Spade, 5)]);
-        assert!(col.can_add_card(card(Suit::Heart, 4))); // Palo distinto permitido en Spider.
-        assert!(col.can_add_card(card(Suit::Spade, 4))); // Mismo palo también permitido.
-        assert!(!col.can_add_card(card(Suit::Spade, 3))); // Valor incorrecto.
-        assert!(!col.can_add_card(card(Suit::Spade, 5))); // Mismo valor.
+        assert!(col.can_add_card(card(Suit::Heart, 4))); // Different suit allowed in Spider.
+        assert!(col.can_add_card(card(Suit::Spade, 4))); // Same suit also allowed.
+        assert!(!col.can_add_card(card(Suit::Spade, 3))); // Incorrect value.
+        assert!(!col.can_add_card(card(Suit::Spade, 5))); // Same value.
     }
 
     #[test]
     fn test_complete_sequence() {
-        // Construye una secuencia K→A de espadas.
+        // Build a Spades K-to-A sequence.
         let mut fu = vec![];
         for v in (1..=13).rev() {
             fu.push(card(Suit::Spade, v));
