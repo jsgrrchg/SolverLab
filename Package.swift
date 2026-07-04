@@ -23,8 +23,17 @@ let package = Package(
             name: "SolverLabApp",
             dependencies: ["SolverCoreBridge"],
             path: "Sources",
-            exclude: ["SolverCoreRS"],
+            exclude: [
+                "SolverCoreRS",
+                "SolverLabApp/Assets.xcassets",
+                "SolverLabApp/SolverLab.icon",
+            ],
             sources: ["SolverLabApp"]
+        ),
+        .testTarget(
+            name: "SolverLabAppTests",
+            dependencies: ["SolverLabApp"],
+            path: "Tests/SolverLabAppTests"
         )
     ]
 )

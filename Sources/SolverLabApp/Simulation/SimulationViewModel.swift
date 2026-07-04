@@ -76,7 +76,7 @@ final class SimulationViewModel: ObservableObject {
         formatDuration(estimatedRemainingTotal)
     }
 
-    private func formatDuration(_ value: TimeInterval) -> String {
+    func formatDuration(_ value: TimeInterval) -> String {
         let totalSeconds = max(0, Int(value.rounded(.up)))
         let hours = totalSeconds / 3600
         let minutes = totalSeconds / 60
@@ -326,12 +326,12 @@ final class SimulationViewModel: ObservableObject {
         return "\(gameName)_results_\(formatter.string(from: Date())).csv"
     }
 
-    private func csvEscape(_ raw: String) -> String {
+    func csvEscape(_ raw: String) -> String {
         let escaped = raw.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
     }
 
-    private func makeCSV(
+    func makeCSV(
         from rows: [SimResult],
         timeoutActiveDisplay: String,
         runConfig: SimConfig?
