@@ -41,7 +41,7 @@ extension SimulationViewModel {
         let timeoutBudget = config.timeoutSeconds > 0 ? config.timeoutSeconds : nil
 
         var finalBoard = board
-        var score = 500  // Puntaje inicial Spider
+        var score = 500  // Initial Spider score
         var appliedMoves = 0
         var timedOut = false
 
