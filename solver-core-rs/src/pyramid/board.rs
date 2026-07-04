@@ -523,3 +523,178 @@ fn encode_opt_card(card: Option<Card>) -> u64 {
         None => 0xFF,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Suit;
+
+    fn card(value: u8) -> Card {
+        Card::new(Suit::Club, value)
+    }
+
+    fn empty_board() -> PyramidBoard {
+        PyramidBoard::new(
+            vec![None; PyramidBoard::PYRAMID_SIZE],
+            vec![],
+            vec![],
+            vec![],
+        )
+    }
+
+    fn board_with_cards(cards: &[(usize, u8)], stock: Vec<Card>, waste: Vec<Card>) -> PyramidBoard {
+        let mut pyramid = vec![None; PyramidBoard::PYRAMID_SIZE];
+        for &(idx, value) in cards {
+            pyramid[idx] = Some(card(value));
+        }
+        PyramidBoard::new(pyramid, stock, waste, vec![])
+    }
+
+    #[test]
+    fn row_and_children_match_pyramid_layout() {
+        assert_eq!(PyramidBoard::row(0), 0);
+        assert_eq!(PyramidBoard::row(1), 1);
+        assert_eq!(PyramidBoard::row(2), 1);
+        assert_eq!(PyramidBoard::row(3), 2);
+        assert_eq!(PyramidBoard::row(9), 3);
+        assert_eq!(PyramidBoard::row(27), 6);
+
+        assert_eq!(PyramidBoard::left_child(0), Some(1));
+        assert_eq!(PyramidBoard::right_child(0), Some(2));
+        assert_eq!(PyramidBoard::left_child(3), Some(6));
+        assert_eq!(PyramidBoard::right_child(3), Some(7));
+        assert_eq!(PyramidBoard::left_child(27), None);
+        assert_eq!(PyramidBoard::right_child(27), None);
+    }
+
+    #[test]
+    fn is_exposed_requires_children_removed() {
+        let mut board = board_with_cards(&[(3, 5), (6, 4), (7, 9), (27, 2)], vec![], vec![]);
+
+        assert!(!board.is_exposed(3));
+        assert!(board.is_exposed(27));
+        assert!(!board.is_exposed(99));
+
+        board.pyramid[6] = None;
+        assert!(!board.is_exposed(3));
+
+        board.pyramid[7] = None;
+        assert!(board.is_exposed(3));
+
+        board.pyramid[3] = None;
+        assert!(!board.is_exposed(3));
+    }
+
+    #[test]
+    fn stock_advance_and_reset_update_stock_and_waste() {
+        let board = PyramidBoard::new(
+            vec![None; PyramidBoard::PYRAMID_SIZE],
+            vec![card(1), card(2)],
+            vec![card(9)],
+            vec![],
+        );
+
+        let advanced = PyramidMove::StockAdvance
+            .apply(&board)
+            .expect("stock should advance");
+        assert_eq!(advanced.stock, vec![card(1)]);
+        assert_eq!(advanced.waste, vec![card(9), card(2)]);
+        assert_eq!(
+            PyramidMove::find_stock_advance_moves(&advanced),
+            vec![PyramidMove::StockAdvance]
+        );
+
+        let reset_source = PyramidBoard::new(
+            vec![None; PyramidBoard::PYRAMID_SIZE],
+            vec![],
+            vec![card(3), card(4), card(5)],
+            vec![],
+        );
+        let reset = PyramidMove::StockReset
+            .apply(&reset_source)
+            .expect("waste should reset into stock");
+        assert_eq!(reset.stock, vec![card(5), card(4), card(3)]);
+        assert!(reset.waste.is_empty());
+        assert_eq!(
+            PyramidMove::find_stock_reset_moves(&reset_source),
+            vec![PyramidMove::StockReset]
+        );
+        assert_eq!(PyramidMove::StockAdvance.apply(&empty_board()), None);
+        assert_eq!(PyramidMove::StockReset.apply(&empty_board()), None);
+    }
+
+    #[test]
+    fn king_to_foundation_waste_removes_only_waste_king() {
+        let board = PyramidBoard::new(
+            vec![None; PyramidBoard::PYRAMID_SIZE],
+            vec![],
+            vec![card(5), card(13)],
+            vec![],
+        );
+
+        let moved = PyramidMove::KingToFoundationWaste
+            .apply(&board)
+            .expect("waste king should move to foundation");
+        assert_eq!(moved.waste, vec![card(5)]);
+        assert_eq!(moved.foundation, vec![card(13)]);
+        assert_eq!(
+            PyramidMove::find_king_moves(&board),
+            vec![PyramidMove::KingToFoundationWaste]
+        );
+
+        let non_king = PyramidBoard::new(
+            vec![None; PyramidBoard::PYRAMID_SIZE],
+            vec![],
+            vec![card(12)],
+            vec![],
+        );
+        assert_eq!(PyramidMove::KingToFoundationWaste.apply(&non_king), None);
+    }
+
+    #[test]
+    fn waste_pyramid_pair_rejects_invalid_sum() {
+        let board = board_with_cards(&[(27, 7)], vec![], vec![card(5)]);
+
+        assert_eq!(
+            PyramidMove::RemovePairWastePyramid { pyramid_index: 27 }.apply(&board),
+            None
+        );
+        assert!(PyramidMove::find_waste_pyramid_pairs(&board).is_empty());
+    }
+
+    #[test]
+    fn pyramid_pair_allows_covered_card_when_source_is_only_blocker() {
+        let board = board_with_cards(&[(3, 6), (6, 7)], vec![], vec![]);
+
+        assert!(!board.is_exposed(3));
+        assert!(board.is_exposed(6));
+
+        let moved = PyramidMove::RemovePairPyramidPyramid { i: 6, j: 3 }
+            .apply(&board)
+            .expect("covered card can be paired when source is its only blocker");
+
+        assert_eq!(moved.pyramid[3], None);
+        assert_eq!(moved.pyramid[6], None);
+        assert_eq!(moved.foundation, vec![card(7), card(6)]);
+    }
+
+    #[test]
+    fn pyramid_pair_rejects_covered_card_with_other_blockers() {
+        let board = board_with_cards(&[(3, 6), (6, 7), (7, 2)], vec![], vec![]);
+
+        assert_eq!(
+            PyramidMove::RemovePairPyramidPyramid { i: 6, j: 3 }.apply(&board),
+            None
+        );
+    }
+
+    #[test]
+    fn find_pyramid_pyramid_pairs_deduplicates_pair_order() {
+        let board = board_with_cards(&[(21, 6), (22, 7)], vec![], vec![]);
+
+        assert_eq!(
+            PyramidMove::find_pyramid_pyramid_pairs(&board),
+            vec![PyramidMove::RemovePairPyramidPyramid { i: 21, j: 22 }]
+        );
+    }
+}
