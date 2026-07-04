@@ -1,0 +1,419 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		11DC483E6DC9A074D078A6D4 /* solver_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D8AD18A83E3757406EE3325 /* solver_core.swift */; };
+		1A31D911B195E5893889E192 /* SimulationViewModel+TriPeaks.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA03B1F6E57B544465B9F378 /* SimulationViewModel+TriPeaks.swift */; };
+		1FE2616869E707EF58F82971 /* SimulationViewModel+Pyramid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D6B04AAC806F6A31A4F7161 /* SimulationViewModel+Pyramid.swift */; };
+		22D780740D69D8C68BC8D539 /* SolverLabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D74D5C923C8278A6C3435A4 /* SolverLabApp.swift */; };
+		61A9B111F56CDFD8F234A00B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 12E2262581A03D402A16BB18 /* Assets.xcassets */; };
+		64BE6CD38EBFFE5E04DFDBD4 /* SimulationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 484C74F732ACF07B6FA47802 /* SimulationViewModel.swift */; };
+		65D9CE99DA578893E73CB7EE /* SimulationViewModel+Spider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18AE67FD648D960D0F92B249 /* SimulationViewModel+Spider.swift */; };
+		9BAE7B723188D58803894D1D /* SimulationViewModel+Runtime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EDC99C36F9C863545AD2CD8 /* SimulationViewModel+Runtime.swift */; };
+		9C0A138BB3F439A21210FA3F /* SolverLab.icon in Resources */ = {isa = PBXBuildFile; fileRef = 2D359584EC368E600B07D011 /* SolverLab.icon */; };
+		B7396C48EAB6ACFCEB9BDF3E /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 629C04A8D2F7F7E3B5D34012 /* Components.swift */; };
+		BB62B2ED03920B456945DCB2 /* SimulationViewModel+Klondike.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CC75020C6DE16F1C955309D /* SimulationViewModel+Klondike.swift */; };
+		C41E812403AB61CAE106A2C5 /* SimulationViewModel+FreeCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4A6ADA8EEDF34198CC2185B /* SimulationViewModel+FreeCell.swift */; };
+		C4C85A0E69C839439B90BF92 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB21FD67E16C33C4737021CE /* ContentView.swift */; };
+		C9C8D56BC007CB1699F3C0D7 /* SimModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903A9006993D094780A39D90 /* SimModels.swift */; };
+		F22826458F2D5BC92027C4C4 /* SolverCoreRS.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B6C41FB1DA8A82E9458D79B /* SolverCoreRS.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		12E2262581A03D402A16BB18 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		18AE67FD648D960D0F92B249 /* SimulationViewModel+Spider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+Spider.swift"; sourceTree = "<group>"; };
+		1B6C41FB1DA8A82E9458D79B /* SolverCoreRS.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = SolverCoreRS.xcframework; sourceTree = "<group>"; };
+		2D359584EC368E600B07D011 /* SolverLab.icon */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SolverLab.icon; path = Sources/SolverLabApp/SolverLab.icon; sourceTree = SOURCE_ROOT; };
+		484C74F732ACF07B6FA47802 /* SimulationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulationViewModel.swift; sourceTree = "<group>"; };
+		4D74D5C923C8278A6C3435A4 /* SolverLabApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SolverLabApp.swift; sourceTree = "<group>"; };
+		629C04A8D2F7F7E3B5D34012 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		6D6B04AAC806F6A31A4F7161 /* SimulationViewModel+Pyramid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+Pyramid.swift"; sourceTree = "<group>"; };
+		6EDC99C36F9C863545AD2CD8 /* SimulationViewModel+Runtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+Runtime.swift"; sourceTree = "<group>"; };
+		7CC75020C6DE16F1C955309D /* SimulationViewModel+Klondike.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+Klondike.swift"; sourceTree = "<group>"; };
+		903A9006993D094780A39D90 /* SimModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimModels.swift; sourceTree = "<group>"; };
+		9C321F8060460E09E86D65A6 /* SolverLab.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SolverLab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9D8AD18A83E3757406EE3325 /* solver_core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = solver_core.swift; sourceTree = "<group>"; };
+		AB21FD67E16C33C4737021CE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		B4A6ADA8EEDF34198CC2185B /* SimulationViewModel+FreeCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+FreeCell.swift"; sourceTree = "<group>"; };
+		FA03B1F6E57B544465B9F378 /* SimulationViewModel+TriPeaks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SimulationViewModel+TriPeaks.swift"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		407A47D071A8E35D03C21AEB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F22826458F2D5BC92027C4C4 /* SolverCoreRS.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0FA156DF3D7C1D0FEAE99999 /* SolverLabApp */ = {
+			isa = PBXGroup;
+			children = (
+				12E2262581A03D402A16BB18 /* Assets.xcassets */,
+				AB21FD67E16C33C4737021CE /* ContentView.swift */,
+				4D74D5C923C8278A6C3435A4 /* SolverLabApp.swift */,
+				96E05AD24229424732F99EF8 /* Simulation */,
+				644A9F6B0A44A1FB52A4A56E /* UI */,
+			);
+			path = SolverLabApp;
+			sourceTree = "<group>";
+		};
+		5EFCBAC07C710D135934A258 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				BCB85DEB82B9757F628B044B /* SolverCoreRS */,
+				0FA156DF3D7C1D0FEAE99999 /* SolverLabApp */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		644A9F6B0A44A1FB52A4A56E /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				629C04A8D2F7F7E3B5D34012 /* Components.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		6A74653171AD19840CE4ED62 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1B6C41FB1DA8A82E9458D79B /* SolverCoreRS.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		910CE17517B31B5C0CB5752E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9C321F8060460E09E86D65A6 /* SolverLab.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		96E05AD24229424732F99EF8 /* Simulation */ = {
+			isa = PBXGroup;
+			children = (
+				903A9006993D094780A39D90 /* SimModels.swift */,
+				484C74F732ACF07B6FA47802 /* SimulationViewModel.swift */,
+				B4A6ADA8EEDF34198CC2185B /* SimulationViewModel+FreeCell.swift */,
+				7CC75020C6DE16F1C955309D /* SimulationViewModel+Klondike.swift */,
+				6D6B04AAC806F6A31A4F7161 /* SimulationViewModel+Pyramid.swift */,
+				6EDC99C36F9C863545AD2CD8 /* SimulationViewModel+Runtime.swift */,
+				18AE67FD648D960D0F92B249 /* SimulationViewModel+Spider.swift */,
+				FA03B1F6E57B544465B9F378 /* SimulationViewModel+TriPeaks.swift */,
+			);
+			path = Simulation;
+			sourceTree = "<group>";
+		};
+		BCB85DEB82B9757F628B044B /* SolverCoreRS */ = {
+			isa = PBXGroup;
+			children = (
+				9D8AD18A83E3757406EE3325 /* solver_core.swift */,
+			);
+			path = SolverCoreRS;
+			sourceTree = "<group>";
+		};
+		FAB80D61937F165AABAD0D0D = {
+			isa = PBXGroup;
+			children = (
+				2D359584EC368E600B07D011 /* SolverLab.icon */,
+				5EFCBAC07C710D135934A258 /* Sources */,
+				6A74653171AD19840CE4ED62 /* Frameworks */,
+				910CE17517B31B5C0CB5752E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CC50930A4E8E3F2603B1AFE0 /* Solverapp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6EE3AF098B953223151F25CA /* Build configuration list for PBXNativeTarget "Solverapp" */;
+			buildPhases = (
+				DC0397ABBB4A12216EE10303 /* Sources */,
+				7A7367E38E4C7810CDC212BB /* Resources */,
+				407A47D071A8E35D03C21AEB /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Solverapp;
+			packageProductDependencies = (
+			);
+			productName = Solverapp;
+			productReference = 9C321F8060460E09E86D65A6 /* SolverLab.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CAF6006F785E2B184EB27461 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2620;
+			};
+			buildConfigurationList = A4BB52488C6C21371578DA29 /* Build configuration list for PBXProject "Solverapp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = FAB80D61937F165AABAD0D0D;
+			minimizedProjectReferenceProxies = 1;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CC50930A4E8E3F2603B1AFE0 /* Solverapp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7A7367E38E4C7810CDC212BB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				61A9B111F56CDFD8F234A00B /* Assets.xcassets in Resources */,
+				9C0A138BB3F439A21210FA3F /* SolverLab.icon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DC0397ABBB4A12216EE10303 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B7396C48EAB6ACFCEB9BDF3E /* Components.swift in Sources */,
+				C4C85A0E69C839439B90BF92 /* ContentView.swift in Sources */,
+				C9C8D56BC007CB1699F3C0D7 /* SimModels.swift in Sources */,
+				C41E812403AB61CAE106A2C5 /* SimulationViewModel+FreeCell.swift in Sources */,
+				BB62B2ED03920B456945DCB2 /* SimulationViewModel+Klondike.swift in Sources */,
+				1FE2616869E707EF58F82971 /* SimulationViewModel+Pyramid.swift in Sources */,
+				9BAE7B723188D58803894D1D /* SimulationViewModel+Runtime.swift in Sources */,
+				65D9CE99DA578893E73CB7EE /* SimulationViewModel+Spider.swift in Sources */,
+				1A31D911B195E5893889E192 /* SimulationViewModel+TriPeaks.swift in Sources */,
+				64BE6CD38EBFFE5E04DFDBD4 /* SimulationViewModel.swift in Sources */,
+				22D780740D69D8C68BC8D539 /* SolverLabApp.swift in Sources */,
+				11DC483E6DC9A074D078A6D4 /* solver_core.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		6DBD4DE351044ECECC182D7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = SolverLab;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = SolverLab;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSAppSleepDisabled = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jfg.solverapp;
+				PRODUCT_NAME = SolverLab;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		7F9869C6B6D77ED342D5396E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A536754595FC1EB5A16B2F63 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = SolverLab;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = SolverLab;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSAppSleepDisabled = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jfg.solverapp;
+				PRODUCT_NAME = SolverLab;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		B395E069CF9E11E67A99B9E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6EE3AF098B953223151F25CA /* Build configuration list for PBXNativeTarget "Solverapp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A536754595FC1EB5A16B2F63 /* Debug */,
+				6DBD4DE351044ECECC182D7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A4BB52488C6C21371578DA29 /* Build configuration list for PBXProject "Solverapp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7F9869C6B6D77ED342D5396E /* Debug */,
+				B395E069CF9E11E67A99B9E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = CAF6006F785E2B184EB27461 /* Project object */;
+}

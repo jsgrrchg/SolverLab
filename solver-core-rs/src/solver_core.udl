@@ -1,0 +1,195 @@
+namespace solver_core {};
+
+// ─── Error type ───
+
+[Error]
+enum SolverError {
+    "InvalidDeck",
+    "DealFailed",
+};
+
+// ─── Shared types ───
+
+enum Suit {
+    "Club",
+    "Diamond",
+    "Heart",
+    "Spade",
+};
+
+dictionary Card {
+    Suit suit;
+    u8 value;
+};
+
+// ─── Move descriptors (serialisable across FFI) ───
+
+dictionary SpiderMoveDesc {
+    string move_type;
+    i32 source;
+    i32 destination;
+    i32 card_count;
+};
+
+dictionary KlondikeMoveDesc {
+    string move_type;
+    i32 source;
+    i32 destination;
+    i32 card_count;
+    u8 card_suit;
+    u8 card_value;
+};
+
+dictionary FreeCellMoveDesc {
+    string move_type;
+    i32 source;
+    i32 destination;
+    i32 card_count;
+    u8 card_suit;
+    u8 card_value;
+};
+
+dictionary PyramidMoveDesc {
+    string move_type;
+    i32 index_a;
+    i32 index_b;
+};
+
+dictionary TriPeaksMoveDesc {
+    string move_type;
+    i32 tableau_index;
+};
+
+// ─── Spider ───
+
+interface SpiderEngine {
+    constructor(u32 suit_count);
+
+    [Throws=SolverError]
+    SpiderBoard deal(sequence<Card> deck);
+
+    sequence<SpiderMoveDesc>? solve([ByRef] SpiderBoard board, boolean allow_partial);
+
+    u32 last_checkpoints_adopted();
+
+    SpiderBoard? apply_move([ByRef] SpiderBoard board, SpiderMoveDesc move_desc);
+
+    boolean is_win([ByRef] SpiderBoard board);
+
+    string progress_token([ByRef] SpiderBoard board);
+
+    i32 completed_sets([ByRef] SpiderBoard board);
+};
+
+interface SpiderBoard {
+};
+
+// ─── Klondike ───
+
+interface KlondikeEngine {
+    constructor(i32 draw_advance);
+
+    [Throws=SolverError]
+    KlondikeBoard deal(sequence<Card> deck);
+
+    sequence<KlondikeMoveDesc>? solve([ByRef] KlondikeBoard board, boolean allow_partial);
+
+    u32 last_checkpoints_adopted();
+
+    KlondikeBoard? apply_move([ByRef] KlondikeBoard board, KlondikeMoveDesc move_desc);
+
+    boolean is_win([ByRef] KlondikeBoard board);
+
+    string progress_token([ByRef] KlondikeBoard board);
+
+    sequence<KlondikeMoveDesc> find_foundation_moves([ByRef] KlondikeBoard board);
+
+    boolean is_from_foundation(KlondikeMoveDesc m);
+
+    boolean is_to_foundation(KlondikeMoveDesc m);
+
+    boolean is_to_column(KlondikeMoveDesc m);
+
+    i32 face_down_count([ByRef] KlondikeBoard board, i32 column);
+};
+
+interface KlondikeBoard {
+};
+
+// ─── FreeCell ───
+
+interface FreeCellEngine {
+    constructor();
+
+    [Throws=SolverError]
+    FreeCellBoard deal(sequence<Card> deck);
+
+    sequence<FreeCellMoveDesc>? solve([ByRef] FreeCellBoard board, f64 timeout_secs, boolean allow_partial);
+
+    u32 last_checkpoints_adopted();
+
+    FreeCellBoard? apply_move([ByRef] FreeCellBoard board, FreeCellMoveDesc move_desc);
+
+    boolean is_win([ByRef] FreeCellBoard board);
+
+    string progress_token([ByRef] FreeCellBoard board);
+
+    boolean is_foundation_move(FreeCellMoveDesc m);
+};
+
+interface FreeCellBoard {
+};
+
+// ─── Pyramid ───
+
+interface PyramidEngine {
+    constructor();
+
+    [Throws=SolverError]
+    PyramidBoard deal(sequence<Card> deck);
+
+    sequence<PyramidMoveDesc>? solve([ByRef] PyramidBoard board, f64 timeout_secs, boolean allow_partial);
+
+    u32 last_checkpoints_adopted();
+
+    PyramidBoard? apply_move([ByRef] PyramidBoard board, PyramidMoveDesc move_desc);
+
+    boolean is_win([ByRef] PyramidBoard board);
+
+    string progress_token([ByRef] PyramidBoard board);
+
+    sequence<PyramidMoveDesc> find_greedy_moves([ByRef] PyramidBoard board);
+
+    boolean is_king_move(PyramidMoveDesc m);
+
+    boolean is_pair_move(PyramidMoveDesc m);
+};
+
+interface PyramidBoard {
+};
+
+// ─── TriPeaks ───
+
+interface TriPeaksEngine {
+    constructor();
+
+    [Throws=SolverError]
+    TriPeaksBoard deal(sequence<Card> deck);
+
+    sequence<TriPeaksMoveDesc>? solve([ByRef] TriPeaksBoard board, boolean allow_partial);
+
+    u32 last_checkpoints_adopted();
+
+    TriPeaksBoard? apply_move([ByRef] TriPeaksBoard board, TriPeaksMoveDesc move_desc);
+
+    boolean is_win([ByRef] TriPeaksBoard board);
+
+    boolean is_tableau_move(TriPeaksMoveDesc m);
+
+    string progress_token([ByRef] TriPeaksBoard board);
+
+    i32 remaining_tableau([ByRef] TriPeaksBoard board);
+};
+
+interface TriPeaksBoard {
+};

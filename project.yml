@@ -1,0 +1,44 @@
+name: Solverapp
+options:
+    minimumXcodeGenVersion: 2.38.0
+configs:
+    Debug: debug
+    Release: release
+settings:
+    base:
+        SWIFT_VERSION: 5.0
+targets:
+    Solverapp:
+        type: application
+        platform: macOS
+        deploymentTarget: "13.0"
+        sources:
+            - path: Sources
+              excludes:
+                  - "SolverLabApp/SolverLab.icon"
+            - path: Sources/SolverLabApp/SolverLab.icon
+              type: folder
+        dependencies:
+            - framework: SolverCoreRS.xcframework
+              embed: false
+        settings:
+            base:
+                PRODUCT_BUNDLE_IDENTIFIER: com.jfg.solverapp
+                PRODUCT_NAME: SolverLab
+                GENERATE_INFOPLIST_FILE: YES
+                INFOPLIST_KEY_CFBundleDisplayName: SolverLab
+                INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+                INFOPLIST_KEY_NSAppSleepDisabled: YES
+                INFOPLIST_KEY_NSHumanReadableCopyright: ""
+                ASSETCATALOG_COMPILER_APPICON_NAME: SolverLab
+schemes:
+    Solverapp:
+        build:
+            targets:
+                Solverapp: all
+        run:
+            config: Debug
+        profile:
+            config: Release
+        archive:
+            config: Release

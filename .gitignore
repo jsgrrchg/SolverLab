@@ -1,0 +1,40 @@
+# Xcode
+*.xcuserstate
+xcuserdata/
+**/xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+.derived/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Rust
+solver-core-rs/target/
+solver-core-rs/rust_tmp/
+
+# Build artifacts
+build_output/
+*.a
+include/
+.build/
+SolverCoreRS.xcframework/
+
+# VS Code
+.vscode/
+
+# Personal local files
+.personal/
+
+# Local agent settings/instructions
+.claude/
+.claude/settings.local.json
+CLAUDE.md
+AGENTS.md
