@@ -17,15 +17,29 @@ DerivedData/
 .LSOverride
 
 # Rust
+target/
 solver-core-rs/target/
 solver-core-rs/rust_tmp/
 
 # Build artifacts
+build/
 build_output/
 *.a
 include/
 .build/
 SolverCoreRS.xcframework/
+
+# Signing and provisioning
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.pem
+*.cer
+*.certSigningRequest
+
+# Local environment
+.env
+.env.*
 
 # VS Code
 .vscode/
