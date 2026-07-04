@@ -369,3 +369,130 @@ pub fn deal(deck: &[Card]) -> Option<KlondikeBoard> {
     board.compute_signature();
     Some(board)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(suit: Suit, value: u8) -> Card {
+        Card::new(suit, value)
+    }
+
+    #[test]
+    fn fast_column_pop_count_adjusts_face_down_len() {
+        let mut col = FastColumn::empty();
+        col.push(card(Suit::Club, 9), true);
+        col.push(card(Suit::Diamond, 8), true);
+        col.push(card(Suit::Heart, 7), false);
+
+        col.pop_count(2);
+
+        assert_eq!(col.len, 1);
+        assert_eq!(col.face_down_len, 1);
+        assert_eq!(col.top(), Some(card(Suit::Club, 9)));
+        assert_eq!(col.top_face_up(), None);
+    }
+
+    #[test]
+    fn fast_column_top_distinguishes_face_down_and_face_up() {
+        let mut col = FastColumn::empty();
+        col.push(card(Suit::Club, 9), true);
+
+        assert_eq!(col.top(), Some(card(Suit::Club, 9)));
+        assert_eq!(col.top_face_up(), None);
+
+        col.push(card(Suit::Heart, 8), false);
+
+        assert_eq!(col.top(), Some(card(Suit::Heart, 8)));
+        assert_eq!(col.top_face_up(), Some(card(Suit::Heart, 8)));
+    }
+
+    #[test]
+    fn fast_column_can_add_run_handles_empty_alternating_and_value() {
+        let empty = FastColumn::empty();
+        assert!(empty.can_add_run(card(Suit::Club, 13)));
+        assert!(!empty.can_add_run(card(Suit::Club, 12)));
+
+        let mut col = FastColumn::empty();
+        col.push(card(Suit::Club, 9), false);
+
+        assert!(col.can_add_run(card(Suit::Heart, 8)));
+        assert!(!col.can_add_run(card(Suit::Spade, 8)));
+        assert!(!col.can_add_run(card(Suit::Heart, 7)));
+    }
+
+    #[test]
+    fn extract_stock_pile_card_compacts_stock_and_decrements_index() {
+        let mut board = KlondikeBoard::new();
+        board.stock[0] = card(Suit::Club, 1);
+        board.stock[1] = card(Suit::Diamond, 2);
+        board.stock[2] = card(Suit::Heart, 3);
+        board.stock_len = 3;
+        board.stock_index = 2;
+
+        let (removed, next) = board
+            .extract_stock_pile_card()
+            .expect("waste card should be extracted");
+
+        assert_eq!(removed, card(Suit::Diamond, 2));
+        assert_eq!(next.stock_len, 2);
+        assert_eq!(next.stock_index, 1);
+        assert_eq!(next.stock[0], card(Suit::Club, 1));
+        assert_eq!(next.stock[1], card(Suit::Heart, 3));
+    }
+
+    #[test]
+    fn stock_advance_and_recycle_reflect_stock_position() {
+        let mut board = KlondikeBoard::new();
+        board.stock_len = 3;
+
+        board.stock_index = 0;
+        assert!(board.can_advance_stock());
+        assert!(!board.can_recycle_stock());
+
+        board.stock_index = 2;
+        assert!(board.can_advance_stock());
+        assert!(!board.can_recycle_stock());
+
+        board.stock_index = 3;
+        assert!(!board.can_advance_stock());
+        assert!(board.can_recycle_stock());
+    }
+
+    #[test]
+    fn stock_pile_card_handles_zero_valid_and_out_of_range_indices() {
+        let mut board = KlondikeBoard::new();
+        board.stock[0] = card(Suit::Club, 1);
+        board.stock[1] = card(Suit::Diamond, 2);
+        board.stock_len = 2;
+
+        board.stock_index = 0;
+        assert_eq!(board.stock_pile_card(), None);
+
+        board.stock_index = 2;
+        assert_eq!(board.stock_pile_card(), Some(card(Suit::Diamond, 2)));
+
+        board.stock_index = 3;
+        assert_eq!(board.stock_pile_card(), None);
+    }
+
+    #[test]
+    fn compute_signature_changes_when_state_changes() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 1), false);
+        board.stock[0] = card(Suit::Heart, 5);
+        board.stock_len = 1;
+        board.stock_index = 1;
+        board.compute_signature();
+        let original = board.signature;
+
+        board.foundation[Suit::Club as usize] = 1;
+        board.compute_signature();
+        assert_ne!(board.signature, original);
+
+        let foundation_signature = board.signature;
+        board.stock_index = 0;
+        board.compute_signature();
+        assert_ne!(board.signature, foundation_signature);
+    }
+}

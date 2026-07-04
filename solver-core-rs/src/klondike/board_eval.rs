@@ -449,3 +449,169 @@ impl CheckpointPolicy {
         delta >= adopt_threshold
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Suit;
+
+    fn card(suit: Suit, value: u8) -> Card {
+        Card::new(suit, value)
+    }
+
+    fn board_with_hidden_counts(hidden_counts: [u8; 7]) -> KlondikeBoard {
+        let mut board = KlondikeBoard::new();
+        for (idx, hidden) in hidden_counts.into_iter().enumerate() {
+            for n in 0..hidden {
+                board.columns[idx].push(card(Suit::Club, n + 1), true);
+            }
+            board.columns[idx].push(card(Suit::Heart, 13 - idx as u8), false);
+        }
+        board.compute_signature();
+        board
+    }
+
+    fn set_stock(board: &mut KlondikeBoard, cards: &[Card], stock_index: u8) {
+        for (idx, card) in cards.iter().enumerate() {
+            board.stock[idx] = *card;
+        }
+        board.stock_len = cards.len() as u8;
+        board.stock_index = stock_index;
+        board.compute_signature();
+    }
+
+    #[test]
+    fn from_board_fast_calculates_tableau_stock_and_foundation_metrics() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Heart, 13), false);
+        board.columns[1].push(card(Suit::Spade, 7), false);
+        board.foundation = [1, 2, 0, 0];
+        set_stock(
+            &mut board,
+            &[
+                card(Suit::Club, 3),
+                card(Suit::Diamond, 4),
+                card(Suit::Heart, 5),
+                card(Suit::Spade, 6),
+            ],
+            1,
+        );
+
+        let eval = BoardEval::from_board_fast(&board, 1);
+
+        assert_eq!(eval.foundation_count, 3);
+        assert_eq!(eval.hidden, 1);
+        assert_eq!(eval.face_up, 2);
+        assert_eq!(eval.empty_cols, 5);
+        assert_eq!(eval.stock_remaining, 3);
+        assert_eq!(eval.waste_count, 1);
+        assert_eq!(eval.depth_penalty, 1);
+        assert_eq!(eval.foundation_imbalance, 2);
+    }
+
+    #[test]
+    fn draw_one_vs_draw_three_stock_accessibility_metrics() {
+        let mut board = KlondikeBoard::new();
+        set_stock(
+            &mut board,
+            &[
+                card(Suit::Club, 1),
+                card(Suit::Club, 2),
+                card(Suit::Club, 3),
+                card(Suit::Club, 4),
+                card(Suit::Club, 5),
+                card(Suit::Club, 6),
+                card(Suit::Club, 7),
+            ],
+            1,
+        );
+
+        let draw_one = BoardEval::from_board_fast(&board, 1);
+        let draw_three = BoardEval::from_board_fast(&board, 3);
+
+        assert_eq!(draw_one.stock_remaining, 6);
+        assert_eq!(draw_one.stock_inaccessible, 0);
+        assert_eq!(draw_one.stock_advance_cost, 6);
+        assert_eq!(draw_three.stock_inaccessible, 4);
+        assert_eq!(draw_three.stock_advance_cost, 2);
+    }
+
+    #[test]
+    fn blocked_kings_only_count_when_no_empty_columns() {
+        let mut board = board_with_hidden_counts([1, 0, 0, 0, 0, 0, 0]);
+        board.columns[0].cards[board.columns[0].face_down_len as usize] = card(Suit::Heart, 13);
+        board.columns[6] = super::super::board::FastColumn::empty();
+
+        assert_eq!(BoardEval::from_board_fast(&board, 1).blocked_kings, 0);
+
+        board.columns[6].push(card(Suit::Club, 5), false);
+        assert_eq!(BoardEval::from_board_fast(&board, 1).blocked_kings, 1);
+    }
+
+    #[test]
+    fn from_board_covers_buried_target_deadlock_reveal_and_stock_target_penalty() {
+        let mut board = KlondikeBoard::new();
+        board.foundation = [0, 0, 0, 0];
+        board.columns[0].push(card(Suit::Club, 4), true);
+        board.columns[0].push(card(Suit::Club, 1), true);
+        board.columns[0].push(card(Suit::Heart, 9), false);
+        set_stock(
+            &mut board,
+            &[
+                card(Suit::Diamond, 2),
+                card(Suit::Diamond, 1),
+                card(Suit::Heart, 1),
+                card(Suit::Spade, 1),
+            ],
+            0,
+        );
+
+        let eval = BoardEval::from_board(&board, 3);
+
+        assert!(eval.target_burial_penalty > 0);
+        assert!(eval.deadlock_count > 0);
+        assert_eq!(eval.reveal_bonus, REVEALED_FOUNDATION_CARD_BONUS);
+        assert!(eval.stranded_blockers > 0);
+        assert!(eval.stock_target_penalty >= STOCK_MISALIGNED_TARGET_PENALTY);
+    }
+
+    #[test]
+    fn checkpoint_policy_base_limit_for_hidden_and_endgame_ranges() {
+        let policy = CheckpointPolicy {
+            max_adoptions: 1,
+            base_limits: [10, 20, 30, 40, 50, 60, 70],
+        };
+
+        let hidden_0 = board_with_hidden_counts([0, 0, 0, 0, 0, 0, 0]);
+        let hidden_7 = board_with_hidden_counts([1, 1, 1, 1, 1, 1, 1]);
+        let hidden_10 = board_with_hidden_counts([2, 2, 2, 1, 1, 1, 1]);
+        let hidden_13 = board_with_hidden_counts([2, 2, 2, 2, 2, 2, 1]);
+        let hidden_16 = board_with_hidden_counts([3, 3, 2, 2, 2, 2, 2]);
+        let hidden_19 = board_with_hidden_counts([3, 3, 3, 3, 3, 2, 2]);
+        let mut endgame = hidden_0;
+        endgame.foundation = [8, 8, 8, 7];
+
+        assert_eq!(policy.base_limit_for(&hidden_0), 10);
+        assert_eq!(policy.base_limit_for(&hidden_7), 20);
+        assert_eq!(policy.base_limit_for(&hidden_10), 30);
+        assert_eq!(policy.base_limit_for(&hidden_13), 40);
+        assert_eq!(policy.base_limit_for(&hidden_16), 50);
+        assert_eq!(policy.base_limit_for(&hidden_19), 60);
+        assert_eq!(policy.base_limit_for(&endgame), 70);
+    }
+
+    #[test]
+    fn checkpoint_policy_is_adoptable_uses_phase_thresholds() {
+        let policy = CheckpointPolicy::default_policy();
+
+        assert!(!policy.is_adoptable(1_000, 1_100, 0));
+        assert!(policy.is_adoptable(1_000, 1_150, 0));
+
+        assert!(!policy.is_adoptable(1_000, 1_090, 10));
+        assert!(policy.is_adoptable(1_000, 1_100, 10));
+
+        assert!(!policy.is_adoptable(100, 119, 30));
+        assert!(policy.is_adoptable(100, 120, 30));
+    }
+}
