@@ -234,8 +234,8 @@ final class SimulationViewModel: ObservableObject {
         self.runActivity = nil
     }
 
-    /// Re-registra la actividad de sistema si macOS la anuló silenciosamente.
-    /// Llamar entre batches para garantizar protección continua contra App Nap.
+    /// Re-registers system activity if macOS silently cancelled it.
+    /// Call between batches to ensure continuous App Nap protection.
     func ensureRunActivity() {
         guard isRunning else { return }
         if runActivity == nil {

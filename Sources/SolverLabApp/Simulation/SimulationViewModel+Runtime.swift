@@ -3,8 +3,8 @@ import Foundation
 
 extension SimulationViewModel {
     nonisolated func runSimulation(config: SimConfig) async {
-        // Elevar QoS del hilo que ejecuta runSimulation al máximo
-        // para evitar que macOS throttlee cuando la app está en segundo plano.
+        // Raise the QoS of the thread running runSimulation to the maximum
+        // to prevent macOS from throttling it when the app is in the background.
         _ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)
         let cpuCap = max(1, ProcessInfo.processInfo.activeProcessorCount)
         var workers =
@@ -46,9 +46,9 @@ extension SimulationViewModel {
 
             if batchResults.isEmpty { break }
 
-            // Re-verificar que la actividad de sistema siga activa entre batches.
-            // Si macOS la anuló silenciosamente (ej. en background prolongado),
-            // la re-registramos para mantener la protección contra App Nap.
+            // Re-check that system activity remains active between batches.
+            // If macOS silently cancelled it (e.g. during prolonged background execution),
+            // re-register it to keep App Nap protection active.
             await MainActor.run {
                 guard !Task.isCancelled else { return }
                 self.ensureRunActivity()
