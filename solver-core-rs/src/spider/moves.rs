@@ -295,4 +295,131 @@ mod tests {
             )
         }));
     }
+
+    #[test]
+    fn column_to_column_metadata_helpers_report_expected_values() {
+        let the_move = SpiderMove::ColumnToColumn {
+            source: 2,
+            destination: 7,
+            card_count: 3,
+        };
+
+        assert!(the_move.is_column_to_column());
+        assert!(!the_move.is_deal_from_stock());
+        assert_eq!(the_move.source_column(), Some(2));
+        assert_eq!(the_move.destination_column(), Some(7));
+        assert_eq!(the_move.card_count(), 3);
+
+        assert!(!SpiderMove::DealFromStock.is_column_to_column());
+        assert!(SpiderMove::DealFromStock.is_deal_from_stock());
+        assert_eq!(SpiderMove::DealFromStock.source_column(), None);
+        assert_eq!(SpiderMove::DealFromStock.destination_column(), None);
+        assert_eq!(SpiderMove::DealFromStock.card_count(), 0);
+    }
+
+    #[test]
+    fn find_deal_from_stock_moves_rejects_empty_columns() {
+        let mut cols: Vec<SpiderColumn> = (0..10)
+            .map(|_| SpiderColumn::new(vec![], vec![card(Suit::Spade, 5)]))
+            .collect();
+        cols[3] = SpiderColumn::empty();
+        let board = SpiderBoard::new(cols, vec![card(Suit::Heart, 10); 10], 0);
+
+        assert!(board.has_empty_column());
+        assert!(SpiderMove::find_deal_from_stock_moves(&board).is_empty());
+        assert_eq!(SpiderMove::DealFromStock.apply(&board), None);
+    }
+
+    #[test]
+    fn deal_from_stock_rejects_insufficient_stock() {
+        let cols: Vec<SpiderColumn> = (0..10)
+            .map(|_| SpiderColumn::new(vec![], vec![card(Suit::Spade, 5)]))
+            .collect();
+        let board = SpiderBoard::new(cols, vec![card(Suit::Heart, 10); 9], 0);
+
+        assert_eq!(
+            SpiderMove::find_deal_from_stock_moves(&board),
+            vec![SpiderMove::DealFromStock]
+        );
+        assert_eq!(SpiderMove::DealFromStock.apply(&board), None);
+    }
+
+    #[test]
+    fn column_to_column_rejects_same_column_invalid_destination_and_invalid_run() {
+        let mut cols: Vec<SpiderColumn> = (0..10).map(|_| SpiderColumn::empty()).collect();
+        cols[0] = SpiderColumn::new(vec![], vec![card(Suit::Spade, 7), card(Suit::Heart, 6)]);
+        cols[1] = SpiderColumn::new(vec![], vec![card(Suit::Spade, 8)]);
+        let board = SpiderBoard::new(cols, vec![], 0);
+
+        assert_eq!(
+            (SpiderMove::ColumnToColumn {
+                source: 0,
+                destination: 0,
+                card_count: 1,
+            })
+            .apply(&board),
+            None
+        );
+        assert_eq!(
+            (SpiderMove::ColumnToColumn {
+                source: 0,
+                destination: 10,
+                card_count: 1,
+            })
+            .apply(&board),
+            None
+        );
+        assert_eq!(
+            (SpiderMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                card_count: 2,
+            })
+            .apply(&board),
+            None
+        );
+    }
+
+    #[test]
+    fn column_to_column_rejects_destination_that_cannot_accept_run() {
+        let mut cols: Vec<SpiderColumn> = (0..10).map(|_| SpiderColumn::empty()).collect();
+        cols[0] = SpiderColumn::new(vec![], vec![card(Suit::Spade, 5)]);
+        cols[1] = SpiderColumn::new(vec![], vec![card(Suit::Heart, 9)]);
+        let board = SpiderBoard::new(cols, vec![], 0);
+
+        assert_eq!(
+            (SpiderMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                card_count: 1,
+            })
+            .apply(&board),
+            None
+        );
+    }
+
+    #[test]
+    fn moving_run_that_completes_sequence_increments_completed_sets() {
+        let mut cols: Vec<SpiderColumn> = (0..10).map(|_| SpiderColumn::empty()).collect();
+        cols[0] = SpiderColumn::new(vec![], vec![card(Suit::Spade, 1)]);
+        cols[1] = SpiderColumn::new(
+            vec![],
+            (2..=13)
+                .rev()
+                .map(|value| card(Suit::Spade, value))
+                .collect(),
+        );
+        let board = SpiderBoard::new(cols, vec![], 0);
+
+        let next = (SpiderMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            card_count: 1,
+        })
+        .apply(&board)
+        .expect("ace should complete the K-to-A sequence");
+
+        assert_eq!(next.completed_sets, 1);
+        assert!(next.columns[1].is_empty());
+    }
 }
