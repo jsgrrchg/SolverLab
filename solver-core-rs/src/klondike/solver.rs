@@ -9,7 +9,7 @@ use super::weights;
 use crate::common::card::Suit;
 
 // ═══════════════════════════════════════════
-// Clave de tabla de transposición
+// Transposition table key
 // ═══════════════════════════════════════════
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -20,7 +20,7 @@ struct KlondikeTtKey {
 const TT_UNDO_SENTINEL: u16 = u16::MAX;
 
 // ═══════════════════════════════════════════
-// Resolutor
+// Solver
 // ═══════════════════════════════════════════
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl KlondikeSolver {
         }
     }
 
-    // ── Generación de sucesores ─────────────────
+    // ── Successor generation ─────────────────
 
     pub fn successors(
         &self,
@@ -114,9 +114,9 @@ impl KlondikeSolver {
         let candidate_moves = KlondikeMove::find_candidate_moves(board, self.draw_advance);
         let next_depth = depth + 1;
 
-        // Fast path: detectar safe foundation moves sin copiar boards.
-        // Si hay alguno, solo generamos transiciones para esos movimientos,
-        // ahorrando apply() + compute_signature de todos los demás candidatos.
+        // Fast path: detect safe foundation moves without copying boards.
+        // If any exist, only generate transitions for those moves, saving
+        // apply() + compute_signature for all other candidates.
         if candidate_moves
             .iter()
             .any(|m| is_safe_move_pre_check(m, board))
@@ -138,12 +138,12 @@ impl KlondikeSolver {
             return transitions;
         }
 
-        // Ruta normal: generar todas las transiciones con poda pre y post apply.
+        // Normal path: generate all transitions with pre- and post-apply pruning.
         let mut transitions = Vec::with_capacity(candidate_moves.len());
 
         for the_move in candidate_moves {
-            // Poda temprana: evaluar reglas que no necesitan to_board
-            // antes de copiar el board y computar signature.
+            // Early pruning: evaluate rules that do not need to_board before
+            // copying the board and computing the signature.
             if self
                 .rules
                 .iter()
@@ -172,7 +172,7 @@ impl KlondikeSolver {
         transitions
     }
 
-    // ── Punto de entrada público del resolutor ──
+    // ── Public solver entry point ──
 
     pub fn solve(
         &self,
@@ -208,8 +208,8 @@ impl KlondikeSolver {
                 break;
             }
 
-            // Bloque de búsqueda: se explora desde el tablero actual hasta hallar
-            // solución, agotar tiempo o un punto de control adoptable.
+            // Search chunk: explore from the current board until finding a solution,
+            // running out of time, or reaching an adoptable checkpoint.
             let chunk_eval = BoardEval::from_board(&current_board, self.draw_advance);
             let start_score = chunk_eval.progress_score();
             context.reset_chunk_locals(&current_board, start_score);
@@ -225,7 +225,7 @@ impl KlondikeSolver {
                     break;
                 }
 
-                // Reinicio de la frontera IDA*: generar sucesores de la raíz actual.
+                // Restart the IDA* frontier: generate successors from the current root.
                 let root_transitions = self.successors(&current_board, None, 0);
                 if root_transitions.is_empty() {
                     break;
@@ -303,7 +303,7 @@ impl KlondikeSolver {
                     path_signatures.remove(&next_signature);
                 }
 
-                // Si no hubo solución, aumentar el límite al siguiente mínimo observado.
+                // If no solution was found, increase the bound to the next observed minimum.
                 if chunk_solution.is_some() || chunk_loop_break || triggered_checkpoint {
                     break;
                 }
@@ -317,7 +317,7 @@ impl KlondikeSolver {
                 }
             }
 
-            // Solución encontrada
+            // Solution found.
             if let Some(solution) = chunk_solution {
                 unified_moves.extend(solution);
                 return KlondikeSolveStats {
@@ -330,7 +330,7 @@ impl KlondikeSolver {
                 break;
             }
 
-            // Adopción de punto de control: si hubo progreso útil, avanzar el estado base.
+            // Checkpoint adoption: if useful progress was made, advance the base state.
             if triggered_checkpoint && context.is_progress_adoptable(start_score, &current_board) {
                 let best_board_result = apply_path(current_board, &context.best_progress_path);
                 if let Some(best_board) = best_board_result {
@@ -353,7 +353,7 @@ impl KlondikeSolver {
                 }
             }
 
-            // Callejón sin salida: no hay punto de control adoptable.
+            // Dead end: no adoptable checkpoint.
             break;
         }
 
@@ -378,7 +378,7 @@ impl KlondikeSolver {
         }
     }
 
-    // ── Recursión principal de IDA* ─────────────
+    // ── Main IDA* recursion ─────────────
 
     fn search_with_bound(
         &self,
@@ -398,14 +398,14 @@ impl KlondikeSolver {
             return IdaSearchResult::CheckpointTriggered;
         }
 
-        // Limitar memoria: limpiar TT cuando supera el umbral configurado.
+        // Limit memory: clear the TT when it exceeds the configured threshold.
         if tt.len() >= weights::TT_MAX_ENTRIES {
             tt.clear();
         }
 
         let h_cost = BoardEval::from_board_fast(board, self.draw_advance).heuristic_cost();
         let f_score = depth as i64 + h_cost;
-        // Poda típica de IDA*: el nodo excede el límite f = g + h.
+        // Typical IDA* pruning: the node exceeds the f = g + h bound.
         if f_score > bound {
             return IdaSearchResult::NextBound(f_score);
         }
@@ -435,7 +435,7 @@ impl KlondikeSolver {
                     continue;
                 }
             }
-            // Evitar ciclos en la ruta actual (búsqueda en profundidad).
+            // Avoid cycles in the current path (depth-first search).
             if path_signatures.contains(&next_signature) {
                 continue;
             }
@@ -480,7 +480,7 @@ impl KlondikeSolver {
 }
 
 // ═══════════════════════════════════════════
-// Resultado y contexto de IDA*
+// IDA* result and context
 // ═══════════════════════════════════════════
 
 pub enum IdaSearchResult {
@@ -582,7 +582,7 @@ impl IdaContext {
 }
 
 // ═══════════════════════════════════════════
-// Funciones auxiliares
+// Helper functions
 // ═══════════════════════════════════════════
 
 fn apply_path(mut board: KlondikeBoard, path: &[KlondikeMove]) -> Option<KlondikeBoard> {
@@ -601,14 +601,14 @@ pub fn progress_token(board: &KlondikeBoard) -> String {
 }
 
 // ═══════════════════════════════════════════
-// Ayudas para ordenar sucesores
+// Successor ordering helpers
 // ═══════════════════════════════════════════
 
 fn successor_order_key(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
 ) -> (u8, std::cmp::Reverse<i64>) {
-    // Orden lexicográfico: primero grupo (tipo de jugada), luego prioridad local.
+    // Lexicographic order: group first (move type), then local priority.
     let exposed_delta = exposed_face_up_delta(transition, from_board);
     let exposed_bonus = (exposed_delta.max(0) as i64) * weights::EXPOSED_BONUS_MULTIPLIER;
     let thoughtful_bonus = thoughtful_reveal_value(transition, from_board);
@@ -627,7 +627,7 @@ fn successor_bucket(
     from_board: &KlondikeBoard,
     exposed_delta: isize,
 ) -> u8 {
-    // Los grupos con menor índice se exploran primero.
+    // Groups with lower indexes are explored first.
     if exposed_delta > 0 {
         return 0;
     }
@@ -727,10 +727,9 @@ fn thoughtful_reveal_value(transition: &KlondikeTransition, from_board: &Klondik
     bonus
 }
 
-/// Bonificación para movimientos que sacan cartas de una columna con un objetivo enterrado.
-/// El resolutor sabe qué cartas están boca abajo; priorizar mover bloqueadores
-/// de columnas que contienen el próximo objetivo de alguna pinta acelera
-/// la ruta crítica hacia la solución.
+/// Bonus for moves that remove cards from a column with a buried target.
+/// The solver knows which cards are face-down; prioritizing blockers from columns
+/// containing the next target of some suit speeds up the critical path to the solution.
 fn critical_path_bonus(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
     let board = from_board;
     let source_col = match transition.the_move {
@@ -744,7 +743,7 @@ fn critical_path_bonus(transition: &KlondikeTransition, from_board: &KlondikeBoa
         return 0;
     }
 
-    // Verificar si alguna carta boca abajo en esta columna es el próximo objetivo.
+    // Check whether any face-down card in this column is the next target.
     for pos in 0..(col.face_down_len as usize) {
         let card = col.cards[pos];
         let target_val = board.foundation[card.suit as usize] + 1;
@@ -756,8 +755,8 @@ fn critical_path_bonus(transition: &KlondikeTransition, from_board: &KlondikeBoa
 }
 
 fn creates_empty_column(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> bool {
-    // Detecta si el movimiento vacía por completo la columna origen.
-    // Esto suele ser valioso porque habilita mover reyes y reestructurar pilas.
+    // Detects whether the move completely empties the source column.
+    // This is usually valuable because it enables moving Kings and restructuring piles.
     match transition.the_move {
         KlondikeMove::ColumnToColumn { source, count, .. } => {
             let src = &from_board.columns[source as usize];
@@ -768,13 +767,13 @@ fn creates_empty_column(transition: &KlondikeTransition, from_board: &KlondikeBo
 }
 
 fn moves_large_stack(transition: &KlondikeTransition) -> bool {
-    // Prioriza traslados de pila "grande" (2+ cartas), que tienden a
-    // desbloquear más jugadas que un movimiento unitario.
+    // Prioritizes moving a "large" stack (2+ cards), which tends to unlock
+    // more moves than a single-card move.
     matches!(transition.the_move, KlondikeMove::ColumnToColumn { count, .. } if count >= 2)
 }
 
-/// Versión pre-apply de la detección de safe foundation move.
-/// Solo necesita el movimiento y el estado de las foundations — sin copiar board.
+/// Pre-apply version of safe foundation move detection.
+/// Only needs the move and foundation state, without copying the board.
 fn is_safe_move_pre_check(m: &KlondikeMove, board: &KlondikeBoard) -> bool {
     let card = match m {
         KlondikeMove::ColumnToFoundation { card, .. } => *card,
@@ -794,22 +793,22 @@ fn is_safe_move_pre_check(m: &KlondikeMove, board: &KlondikeBoard) -> bool {
 }
 
 fn is_safe_foundation_move(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> bool {
-    // Solo aplica a movimientos hacia fundación.
-    // Si la jugada no termina en fundación, no se considera "segura".
+    // Only applies to moves toward foundation.
+    // If the move does not end in foundation, it is not considered "safe".
     let card = match transition.the_move {
         KlondikeMove::ColumnToFoundation { card, .. } => card,
         KlondikeMove::StockPileToFoundation { card } => card,
         _ => return false,
     };
 
-    // Ases y doses son siempre seguros: no bloquean progresión relevante.
+    // Aces and twos are always safe: they do not block relevant progression.
     if card.value <= 2 {
         return true;
     }
 
-    // Regla de seguridad clásica:
-    // subir una carta de un color es seguro cuando las dos fundaciones
-    // del color opuesto ya alcanzaron (valor - 1).
+    // Classic safety rule:
+    // moving up a card of one color is safe when both foundations of the
+    // opposite color have already reached (value - 1).
     let f = &from_board.foundation;
     let (opp_a, opp_b) = match card.suit {
         Suit::Club | Suit::Spade => (f[Suit::Diamond as usize], f[Suit::Heart as usize]),
@@ -820,7 +819,7 @@ fn is_safe_foundation_move(transition: &KlondikeTransition, from_board: &Klondik
 }
 
 pub fn deal(deck: &[crate::common::card::Card]) -> Option<KlondikeBoard> {
-    // Reexpone la función de reparto del módulo board para mantener una API
-    // de alto nivel centrada en el solver.
+    // Re-exposes the board module deal function to keep a high-level
+    // solver-centered API.
     super::board::deal(deck)
 }

@@ -1,204 +1,203 @@
-//! Sistema de Pesos y Umbrales del solver Klondike.
-//! Centralizado para facilitar tuning y evitar literales dispersos.
+//! Klondike solver weights and thresholds.
+//! Centralized to simplify tuning and avoid scattered literals.
 
 // ── Heuristic Cost ──────────────────────────────
 
-/// Divisor para el bonus de profundidad de enterramiento, fórmula: cost += fd + (fd - 1) * MULTIPLIER
+/// Divisor for burial depth bonus, formula: cost += fd + (fd - 1) * MULTIPLIER.
 pub const HIDDEN_DEPTH_DIVISOR: i64 = 2;
 
-/// Bonus por columnas vacías con rendimientos decrecientes (index = min(empty_cols, 4))
+/// Empty-column bonus with diminishing returns (index = min(empty_cols, 4)).
 pub const EMPTY_COL_BONUS: [i64; 5] = [0, 3, 5, 6, 6];
 
-/// Penalización por king bloqueado (sin columna vacía + ocultas debajo)
+/// Penalty for a blocked King (no empty column + hidden cards below).
 pub const BLOCKED_KING_PENALTY: i64 = 3;
 
-/// Umbral de stock restante para activar penalización de waste
+/// Remaining-stock threshold for enabling waste penalty.
 pub const WASTE_THRESHOLD_STOCK: i64 = 6;
 
-/// Umbral mínimo de waste para activar penalización
+/// Minimum waste threshold for enabling penalty.
 pub const WASTE_THRESHOLD_COUNT: i64 = 10;
 
-/// Divisor del escalado de waste cuando se activa la penalización
+/// Waste scaling divisor once the penalty is enabled.
 pub const WASTE_SCALE_DIVISOR: i64 = 3;
 
-/// Divisor para penalización con stock completamente vacío
+/// Penalty divisor when the stock is completely empty.
 pub const WASTE_EMPTY_STOCK_DIVISOR: i64 = 4;
 
-/// Tolerancia de desequilibrio entre foundations antes de penalizar
+/// Foundation imbalance tolerance before applying a penalty.
 pub const IMBALANCE_TOLERANCE: i64 = 2;
 
-/// Peso multiplicador del desequilibrio de foundation
+/// Multiplier weight for foundation imbalance.
 pub const IMBALANCE_WEIGHT: i64 = 4;
 
-/// Divisor para el costo de stock advances en heuristic_cost (endgame path: hidden==0).
-/// Conservador (/2) para no sobreestimar (costo real = stock_remaining).
+/// Divisor for stock advance cost in heuristic_cost (endgame path: hidden==0).
+/// Conservative (/2) to avoid overestimation (real cost = stock_remaining).
 pub const STOCK_ADVANCE_DIVISOR: i64 = 2;
 
-// ── Heurísticas Thoughtful ──────────────────────
-// Estas señales NO se usan en heuristic_cost (admisibilidad),
-// solo en progress_score y successor ordering.
+// ── Thoughtful Heuristics ──────────────────────
+// These signals are NOT used in heuristic_cost (admissibility),
+// only in progress_score and successor ordering.
 
-/// Penalización multiplicadora si una carta "Target" se encuentra boca abajo.
-/// Solo se usa en progress_score via PROGRESS_BURIAL_WEIGHT.
+/// Multiplier penalty if a "target" card is face-down.
+/// Only used in progress_score via PROGRESS_BURIAL_WEIGHT.
 pub const BURIED_TARGET_PENALTY: i64 = 2;
 
-/// Penalidad por deadlock lógico boca abajo, ponderada por severidad.
-/// Solo se usa en progress_score via PROGRESS_DEADLOCK_WEIGHT.
+/// Penalty for a logical face-down deadlock, weighted by severity.
+/// Only used in progress_score via PROGRESS_DEADLOCK_WEIGHT.
 pub const DEADLOCK_PENALTY: i64 = 1;
 
-/// Bonus de ordenamiento cuando un movimiento revela la carta target exacta.
-/// Solo afecta al orden de exploración, no a la admisibilidad de IDA*.
+/// Ordering bonus when a move reveals the exact target card.
+/// Only affects exploration order, not IDA* admissibility.
 pub const THOUGHTFUL_REVEAL_TARGET: i64 = 400;
 
-/// Bonus de ordenamiento cuando un movimiento revela un Rey con columna vacía disponible.
+/// Ordering bonus when a move reveals a King with an empty column available.
 pub const THOUGHTFUL_REVEAL_KING: i64 = 200;
 
-/// Bonus de ordenamiento cuando un movimiento revela una carta cercana al target (+1 o +2).
+/// Ordering bonus when a move reveals a card near the target (+1 or +2).
 pub const THOUGHTFUL_REVEAL_NEAR_TARGET: i64 = 150;
 
 // ── Thoughtful Deep Analysis ────────────────────
-// Señales que explotan el conocimiento de TODAS las cartas ocultas.
-// Solo se usan en progress_score y successor ordering.
+// Signals that use knowledge of ALL hidden cards.
+// Only used in progress_score and successor ordering.
 
-/// Penalización por bloqueador sin destino visible encima de un target.
-/// Un target con blockers "varados" es mucho más difícil de desenterrar
-/// que uno con blockers que tienen destinos claros.
+/// Penalty for a blocker with no visible destination above a target.
+/// A target with "stranded" blockers is much harder to uncover than one
+/// with blockers that have clear destinations.
 pub const PROGRESS_STRANDED_BLOCKER_PENALTY: i64 = 200;
 
-/// Penalización por target en waste (ya pasó, necesita recycle para acceder).
+/// Penalty for a target in waste (already passed, requires recycle to access).
 pub const STOCK_WASTE_TARGET_PENALTY: i64 = 150;
 
-/// Penalización por target en stock no alineado con draw_advance.
-/// Con draw-3, solo 1/3 de las cartas son accesibles por pass.
-/// Un target misaligned necesita recycle completo.
+/// Penalty for a target in stock that is not aligned with draw_advance.
+/// With draw-3, only 1/3 of cards are accessible per pass.
+/// A misaligned target requires a full recycle.
 pub const STOCK_MISALIGNED_TARGET_PENALTY: i64 = 200;
 
-/// Bonus de ordenamiento para movimientos que sacan cartas de una columna
-/// que tiene un target enterrado (movimiento en el "critical path").
+/// Ordering bonus for moves that remove cards from a column containing a
+/// buried target (a "critical path" move).
 pub const CRITICAL_PATH_MOVE_BONUS: i64 = 250;
 
 // ── Progress Score ──────────────────────────────
 
-/// Peso de cada carta en foundation para progress_score
+/// Weight of each foundation card in progress_score.
 pub const PROGRESS_FOUNDATION_WEIGHT: i64 = 1300;
 
-/// Peso de cada carta boca arriba en columnas
+/// Weight of each face-up card in columns.
 pub const PROGRESS_FACE_UP_WEIGHT: i64 = 110;
 
-/// Penalización de cada carta oculta en columnas
+/// Penalty for each hidden card in columns.
 pub const PROGRESS_HIDDEN_PENALTY: i64 = 300;
 
-/// Bonus por columna vacía en progress_score
+/// Empty-column bonus in progress_score.
 pub const PROGRESS_EMPTY_COL_BONUS: i64 = 200;
 
-/// Penalización por king bloqueado en progress_score
+/// Blocked-King penalty in progress_score.
 pub const PROGRESS_BLOCKED_KINGS_PENALTY: i64 = 250;
 
-/// Multiplicador de waste_penalty en progress_score
+/// waste_penalty multiplier in progress_score.
 pub const PROGRESS_WASTE_MULTIPLIER: i64 = 5;
 
-/// Bonus en progress_score por revelar una carta clave Rey con columna vacía.
+/// progress_score bonus for revealing a key King with an empty column.
 pub const REVEALED_KING_BONUS: i64 = 400;
 
-/// Bonus en progress_score por revelar la carta target siguiente de una pinta.
+/// progress_score bonus for revealing the next target card of a suit.
 pub const REVEALED_FOUNDATION_CARD_BONUS: i64 = 600;
 
 // ── Successor Ordering ──────────────────────────
 
-/// Multiplicador del bonus por exponer cartas ocultas
+/// Multiplier for the bonus from exposing hidden cards.
 pub const EXPOSED_BONUS_MULTIPLIER: i64 = 300;
 
-/// Peso thoughtful de targets enterrados en progress_score.
-/// Sin restricciones de admisibilidad: penaliza checkpoints que dejan targets bloqueados.
+/// Thoughtful weight for buried targets in progress_score.
+/// No admissibility constraints: penalizes checkpoints that leave targets blocked.
 pub const PROGRESS_BURIAL_WEIGHT: i64 = 110;
 
-/// Peso thoughtful de deadlocks en progress_score.
-/// Sin restricciones de admisibilidad: penaliza checkpoints que mantienen
-/// inversiones de pinta activas.
+/// Thoughtful weight for deadlocks in progress_score.
+/// No admissibility constraints: penalizes checkpoints that keep active suit inversions.
 pub const PROGRESS_DEADLOCK_WEIGHT: i64 = 160;
 
-/// Umbral de cartas ocultas para activar bonus near-autoplay en progress_score.
-/// Cuando hidden <= este valor, se aplica bonus cuadrático creciente.
+/// Hidden-card threshold for enabling the near-autoplay bonus in progress_score.
+/// When hidden <= this value, an increasing quadratic bonus is applied.
 pub const AUTOPLAY_PROXIMITY_THRESHOLD: i64 = 7;
 
-/// Peso base del bonus near-autoplay: proximity^2 * este valor.
-/// Estados con pocas cartas ocultas son casi auto-ganados → fuerte incentivo.
+/// Base weight of the near-autoplay bonus: proximity^2 * this value.
+/// States with few hidden cards are almost auto-won, so this is a strong incentive.
 pub const PROGRESS_AUTOPLAY_PROXIMITY: i64 = 100;
 
-/// Prioridad secundaria para movimientos de foundation segura
-pub const PRIORITY_SAFE_FOUNDATION: i64 = 600; // Restaurado
+/// Secondary priority for safe foundation moves.
+pub const PRIORITY_SAFE_FOUNDATION: i64 = 600; // Restored.
 
-/// Prioridad secundaria para movimientos a foundation (no seguros)
+/// Secondary priority for moves to foundation (not safe).
 pub const PRIORITY_TO_FOUNDATION: i64 = 500;
 
-/// Prioridad secundaria para movimientos desde foundation
+/// Secondary priority for moves from foundation.
 pub const PRIORITY_FROM_FOUNDATION: i64 = 100;
 
-/// Prioridad secundaria base para stock advance
+/// Base secondary priority for stock advance.
 pub const PRIORITY_STOCK_ADVANCE: i64 = 120;
 
-/// Prioridad secundaria para stock recycle
+/// Secondary priority for stock recycle.
 pub const PRIORITY_STOCK_RECYCLE: i64 = 10;
 
-/// Prioridad secundaria base para movimientos de columna
+/// Base secondary priority for column moves.
 pub const PRIORITY_COLUMN_BASE: i64 = 100;
 
-/// Bonus secundario por cada carta adicional en stack movido
+/// Secondary bonus for each additional card in the moved stack.
 pub const PRIORITY_STACK_BONUS: i64 = 20;
 
-/// Bonus secundario por crear columna vacía en C2C
+/// Secondary bonus for creating an empty column in C2C.
 pub const PRIORITY_EMPTY_COL_BONUS: i64 = 300;
 
 /// ── Checkpoint Adoption ─────────────────────────
-/// Define el progreso necesario para adoptar un checkpoint
+/// Defines the progress required to adopt a checkpoint.
 
-/// Fase temprana (fc < 10): clamps para umbral de adopción
+/// Early phase (fc < 10): adoption-threshold clamps.
 pub const ADOPT_EARLY_CLAMP: (i64, i64) = (150, 1500);
 
-/// Fase media (10 <= fc < 30): clamps para umbral de adopción
+/// Mid phase (10 <= fc < 30): adoption-threshold clamps.
 pub const ADOPT_MID_CLAMP: (i64, i64) = (100, 1000);
 
-/// Fase tardía (fc >= 30): clamps para umbral de adopción
+/// Late phase (fc >= 30): adoption-threshold clamps.
 pub const ADOPT_LATE_CLAMP: (i64, i64) = (20, 500);
 
-/// Umbral de fc para considerar earlygame
+/// fc threshold for considering the position earlygame.
 pub const ADOPT_EARLY_THRESHOLD_FC: i64 = 10;
 
-/// Umbral de fc para considerar midgame
+/// fc threshold for considering the position midgame.
 pub const ADOPT_MID_THRESHOLD_FC: i64 = 30;
 
-/// Porcentaje relativo al score inicial para calcular umbral base
+/// Percentage relative to the initial score for calculating the base threshold.
 pub const ADOPT_RELATIVE_PCT: i64 = 3;
 
 /// ── Checkpoint Policy / Limits ──────────────────
-/// Define el límite de nodos para cada dificultad de tablero.
+/// Defines the node limit for each board difficulty.
 
-/// Máximo de checkpoints adoptados antes de abandonar
+/// Maximum adopted checkpoints before giving up.
 pub const MAX_CHECKPOINTS: u32 = 40;
 
-/// Profundidad máxima de búsqueda
+/// Maximum search depth.
 pub const MAX_DEPTH: usize = 200;
 
-/// Máximo de undos permitidos
+/// Maximum allowed undos.
 pub const MAX_UNDOS: usize = 20;
 
-/// Timeout de búsqueda en segundos
+/// Search timeout in seconds.
 pub const TIMEOUT_SECS: f64 = 100.0;
 
-/// Tamaño máximo de la transposition table antes de limpiar
+/// Maximum transposition table size before clearing.
 pub const TT_MAX_ENTRIES: usize = 5_000_000;
 
-/// Límite de nodos de checkpoint como fallback inicial
+/// Checkpoint node limit used as the initial fallback.
 pub const CHECKPOINT_FALLBACK_LIMIT: u64 = 500_000;
 
-/// Tabla de límites base de nodos por dificultad (hidden_bucket)
-/// Índice 0..5: basado en rango de hidden cards.  Índice 6: endgame (fc > 30).
+/// Table of base node limits by difficulty (hidden_bucket).
+/// Index 0..5: based on hidden-card range. Index 6: endgame (fc > 30).
 pub const CHECKPOINT_BASE_LIMITS: [u64; 7] = [
-    800_000,   // hidden 0–6 (Básico)
-    1_200_000, // hidden 7–9 (Medio-bajo)
+    800_000,   // hidden 0-6 (Basic)
+    1_200_000, // hidden 7-9 (Lower-mid)
     1_800_000, // hidden 10–12 (Normal)
-    2_200_000, // hidden 13–15 (Medio-alto)
-    3_500_000, // hidden 16–18 (Difícil)
-    8_000_000, // hidden 19+ (Muy difícil)
-    800_000, // endgame: fc > 30, hidden <= 6 — igualado al base para no perder juegos casi ganados
+    2_200_000, // hidden 13-15 (Upper-mid)
+    3_500_000, // hidden 16-18 (Hard)
+    8_000_000, // hidden 19+ (Very hard)
+    800_000, // endgame: fc > 30, hidden <= 6; matched to base to avoid losing nearly won games
 ];

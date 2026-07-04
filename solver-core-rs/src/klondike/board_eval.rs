@@ -1,9 +1,9 @@
-//! Evaluación unificada de tablero y política de checkpoints para Klondike.
+//! Unified Klondike board evaluation and checkpoint policy.
 //!
-//! `BoardEval` computa todas las métricas del tablero una sola vez,
-//! y expone tanto `heuristic_cost()` como `progress_score()` de forma coherente.
+//! `BoardEval` computes all board metrics once, and exposes both
+//! `heuristic_cost()` and `progress_score()` consistently.
 //!
-//! `CheckpointPolicy` encapsula la lógica de cuándo hacer checkpoint y cuándo adoptar.
+//! `CheckpointPolicy` encapsulates when to checkpoint and when to adopt.
 
 use super::board::KlondikeBoard;
 use super::weights::*;
@@ -13,8 +13,8 @@ use crate::common::card::Card;
 // BoardEval
 // ═══════════════════════════════════════════
 
-/// Evaluación completa del estado de un tablero.
-/// Se computa una vez y se consulta para heurística y progreso.
+/// Complete evaluation of a board state.
+/// Computed once and queried for heuristic cost and progress.
 pub struct BoardEval {
     pub foundation_count: i64,
     pub face_up: i64,
@@ -24,20 +24,20 @@ pub struct BoardEval {
     pub stock_remaining: i64,
     pub waste_count: i64,
     pub stock_inaccessible: i64,
-    pub foundation_imbalance: i64, // max_rank - min_rank (raw, sin tolerancia)
-    pub depth_penalty: i64,        // suma de fd + (fd-1)/DIVISOR por columna
-    pub stock_advance_cost: i64,   // mínimo de advances necesarios para acceder al stock
-    pub target_burial_penalty: i64, // penalización por cartas target boca abajo
-    pub deadlock_count: i64,       // cantidad de deadlocks lógicos detectados
-    pub reveal_bonus: i64,         // bonificación por exponer carta clave
-    pub stranded_blockers: i64,    // bloqueadores sin destino encima de targets
-    pub stock_target_penalty: i64, // penalización por targets atrapados en stock
+    pub foundation_imbalance: i64, // max_rank - min_rank (raw, no tolerance)
+    pub depth_penalty: i64,        // sum of fd + (fd-1)/DIVISOR per column
+    pub stock_advance_cost: i64,   // minimum advances needed to access the stock
+    pub target_burial_penalty: i64, // penalty for face-down target cards
+    pub deadlock_count: i64,       // number of detected logical deadlocks
+    pub reveal_bonus: i64,         // bonus for exposing a key card
+    pub stranded_blockers: i64,    // blockers above targets with no destination
+    pub stock_target_penalty: i64, // penalty for targets trapped in stock
 }
 
 impl BoardEval {
-    /// Constructor rápido: solo métricas base necesarias para heuristic_cost.
-    /// Usado en el hot path de IDA* (search_with_bound) donde el rendimiento es crítico.
-    /// NO computa thoughtful fields (target_burial, deadlock, reveal_bonus).
+    /// Fast constructor: only base metrics needed for heuristic_cost.
+    /// Used in the IDA* hot path (search_with_bound), where performance is critical.
+    /// Does NOT compute thoughtful fields (target_burial, deadlock, reveal_bonus).
     pub fn from_board_fast(board: &KlondikeBoard, draw_advance: u8) -> Self {
         let mut depth_penalty = 0i64;
         let mut hidden = 0i64;
@@ -54,7 +54,7 @@ impl BoardEval {
             }
         }
 
-        // Blocked kings: solo cuando no hay columnas vacías
+        // Blocked Kings: only when there are no empty columns.
         let blocked_kings = if empty_cols == 0 {
             board
                 .columns
@@ -89,9 +89,9 @@ impl BoardEval {
         let stock_remaining = board.stock_len.saturating_sub(board.stock_index) as i64;
         let waste_count = board.stock_index as i64;
 
-        // Stock inaccesible: fórmula global restaurada.
-        // Con Draw-1 todas las cartas son accesibles secuencialmente.
-        // Con Draw-3 solo ceil(remaining/3) son directamente accesibles.
+        // Inaccessible stock: restored global formula.
+        // With Draw-1 all cards are sequentially accessible.
+        // With Draw-3 only ceil(remaining/3) are directly accessible.
         let da = (draw_advance as i64).max(1);
         let stock_inaccessible = if stock_remaining > 0 && da > 1 {
             let accessible = (stock_remaining + da - 1) / da;
@@ -100,9 +100,9 @@ impl BoardEval {
             0
         };
 
-        // Stock advance cost: número mínimo de moves de advance necesarios
-        // para hacer accesible cada carta restante del stock.
-        // Estos son moves NO-foundation, adicionales al base 52-fc.
+        // Stock advance cost: minimum number of advance moves needed to make
+        // each remaining stock card accessible.
+        // These are non-foundation moves, added to the base 52-fc.
         let stock_advance_cost = if stock_remaining > 0 {
             (stock_remaining + da - 1) / da
         } else {
@@ -129,12 +129,12 @@ impl BoardEval {
         }
     }
 
-    /// Constructor completo: computa todas las métricas incluyendo señales thoughtful.
-    /// Usado para progress_score en consider_progress y checkpoint adoption.
+    /// Full constructor: computes all metrics, including thoughtful signals.
+    /// Used for progress_score in consider_progress and checkpoint adoption.
     pub fn from_board(board: &KlondikeBoard, draw_advance: u8) -> Self {
         let mut eval = Self::from_board_fast(board, draw_advance);
 
-        // Computar métricas thoughtful solo para progress_score
+        // Compute thoughtful metrics only for progress_score.
         let mut target_cards = [255u8; 4];
         for suit in 0..4 {
             let required_val = board.foundation[suit] + 1;
@@ -148,8 +148,8 @@ impl BoardEval {
                 continue;
             }
 
-            // Para detectar deadlocks: el valor más bajo visto de cada pinta
-            // iterando de superficie a fondo
+            // For deadlock detection: the lowest value seen for each suit,
+            // iterating from surface to depth.
             let mut lowest_ranks = [255i32; 4];
 
             for i in (0..c.face_down_len).rev() {
@@ -157,13 +157,13 @@ impl BoardEval {
                 let card_suit = card.suit as usize;
                 let card_val = card.value;
 
-                // Target Depth Penalty: cartas target enterradas
+                // Target depth penalty: buried target cards.
                 if card_val == target_cards[card_suit] {
                     let obstacle_count = (c.len - i) as i64;
                     eval.target_burial_penalty += obstacle_count * BURIED_TARGET_PENALTY;
                 }
 
-                // Deadlock Detection: inversión de rango en misma pinta
+                // Deadlock detection: rank inversion in the same suit.
                 if lowest_ranks[card_suit] < card_val as i32 {
                     let severity = (card_val as i32 - lowest_ranks[card_suit]).min(3) as i64;
                     eval.deadlock_count += severity;
@@ -173,7 +173,7 @@ impl BoardEval {
                 }
             }
 
-            // Reveal Value Reward (Thoughtful: conocemos la carta boca abajo)
+            // Reveal value reward (thoughtful: the face-down card is known).
             if c.face_down_len > 0 {
                 let would_reveal = c.cards[(c.face_down_len - 1) as usize];
                 if would_reveal.value == 13 && eval.empty_cols > 0 {
@@ -184,10 +184,10 @@ impl BoardEval {
             }
         }
 
-        // ── Análisis de Viabilidad de Bloqueadores (Thoughtful Profundo) ────────────
-        // Para cada target enterrado, verificar si los bloqueadores encima
-        // tienen destino visible. Un bloqueador "varado" (sin destino en el
-        // estado actual) indica que desenterrar ese target será costoso.
+        // ── Blocker Viability Analysis (Deep Thoughtful) ────────────
+        // For each buried target, check whether blockers above it have a visible
+        // destination. A "stranded" blocker (no destination in the current state)
+        // indicates that uncovering that target will be costly.
         let mut stranded_blockers = 0i64;
         for suit in 0..4usize {
             if target_cards[suit] == 255 {
@@ -202,16 +202,16 @@ impl BoardEval {
                 for pos in 0..(col.face_down_len as usize) {
                     let card = col.cards[pos];
                     if card.suit as usize == suit && card.value == target_val {
-                        // Target encontrado en posición face-down `pos`.
-                        // Revisar bloqueadores face-down encima (pos+1..face_down_len).
+                        // Target found at face-down position `pos`.
+                        // Check face-down blockers above it (pos+1..face_down_len).
                         for bp in (pos + 1)..(col.face_down_len as usize) {
                             let blocker = col.cards[bp];
                             if !Self::card_has_column_destination(board, blocker, col_idx) {
                                 stranded_blockers += 1;
                             }
                         }
-                        // Revisar si el stack face-up puede moverse.
-                        // El bottom del face-up run determina si toda la pila puede irse.
+                        // Check whether the face-up stack can move.
+                        // The bottom of the face-up run determines whether the whole pile can move.
                         if col.num_face_up() > 0 {
                             let bottom_fu = col.cards[col.face_down_len as usize];
                             if !Self::card_has_column_destination(board, bottom_fu, col_idx) {
@@ -223,15 +223,15 @@ impl BoardEval {
                     }
                 }
                 if found {
-                    break; // Target de esta pinta ya encontrado
+                    break; // Target for this suit already found.
                 }
             }
         }
         eval.stranded_blockers = stranded_blockers;
 
-        // ── Accesibilidad de Targets en Stock (Thoughtful Profundo) ────────────
-        // Para cada target que está en el stock (no en columnas), evaluar
-        // qué tan accesible es dada la posición actual y el draw_advance.
+        // ── Target Accessibility in Stock (Deep Thoughtful) ────────────
+        // For each target in the stock (not in columns), evaluate how accessible
+        // it is given the current position and draw_advance.
         let mut stock_target_penalty = 0i64;
         let da = draw_advance as usize;
         let si = board.stock_index as usize;
@@ -242,29 +242,29 @@ impl BoardEval {
             }
             let target_val = target_cards[suit];
 
-            // Primero verificar si el target está en alguna columna
+            // First check whether the target is in any column.
             for col in &board.columns {
                 for pos in 0..(col.len as usize) {
                     if col.cards[pos].suit as usize == suit && col.cards[pos].value == target_val {
-                        continue 'suit_loop; // En columna: blocker analysis se encarga
+                        continue 'suit_loop; // In a column: blocker analysis handles it.
                     }
                 }
             }
 
-            // Target no está en columnas → buscar en stock
+            // Target is not in columns; search stock.
             for pos in 0..(board.stock_len as usize) {
                 let card = board.stock[pos];
                 if card.suit as usize == suit && card.value == target_val {
                     if si > 0 && pos == si - 1 {
-                        // Es el pile card actual: accesible ahora, sin penalización
+                        // It is the current pile card: accessible now, no penalty.
                     } else if pos < si {
-                        // En waste (ya pasó): necesita recycle
+                        // In waste (already passed): requires recycle.
                         stock_target_penalty += STOCK_WASTE_TARGET_PENALTY as i64;
                     } else if da > 1 {
-                        // En stock restante: verificar alineación con draw_advance
+                        // In remaining stock: check alignment with draw_advance.
                         let offset = pos - si + 1;
                         if offset % da != 0 {
-                            // Misaligned: no accesible en este pass
+                            // Misaligned: not accessible in this pass.
                             stock_target_penalty += STOCK_MISALIGNED_TARGET_PENALTY as i64;
                         }
                     }
@@ -277,55 +277,55 @@ impl BoardEval {
         eval
     }
 
-    /// Costo heurístico para IDA* (escala ~0–80+, menor = mejor).
-    /// Mantiene admisibilidad: nunca sobreestima el costo real.
-    /// Las señales thoughtful NO se incluyen aquí para preservar admisibilidad.
+    /// Heuristic cost for IDA* (scale ~0-80+, lower is better).
+    /// Maintains admissibility: never overestimates the real cost.
+    /// Thoughtful signals are NOT included here to preserve admissibility.
     pub fn heuristic_cost(&self) -> i64 {
-        // Auto-play detection: si no hay cartas ocultas ni stock, el juego está ganado
+        // Auto-play detection: if there are no hidden cards and no stock, the game is won.
         if self.hidden == 0 && self.stock_remaining == 0 && self.waste_count == 0 {
             return 0;
         }
 
-        // Endgame mejorado: sin cartas ocultas, el juego es casi auto-ganado.
-        // Solo necesitamos mover cartas restantes a foundations + advances del stock.
+        // Improved endgame: with no hidden cards, the game is almost auto-won.
+        // Only remaining foundation moves plus stock advances are needed.
         if self.hidden == 0 {
             return 52 - self.foundation_count + self.stock_advance_cost / STOCK_ADVANCE_DIVISOR;
         }
 
-        // Base: cartas que faltan en foundations
+        // Base: cards missing from foundations.
         let mut cost = 52 - self.foundation_count;
 
-        // Profundidad de enterramiento
+        // Burial depth.
         cost += self.depth_penalty;
 
-        // Movilidad: bonus por columnas vacías con rendimientos decrecientes
+        // Mobility: empty-column bonus with diminishing returns.
         let idx = (self.empty_cols as usize).min(EMPTY_COL_BONUS.len() - 1);
         cost -= EMPTY_COL_BONUS[idx];
 
-        // Kings bloqueados
+        // Blocked Kings.
         cost += self.blocked_kings * BLOCKED_KING_PENALTY;
 
-        // Agotamiento del waste
+        // Waste exhaustion.
         cost += self.waste_penalty();
 
-        // Desequilibrio de foundation
+        // Foundation imbalance.
         let excess = self.foundation_imbalance - IMBALANCE_TOLERANCE;
         if excess > 0 {
             cost += excess * IMBALANCE_WEIGHT;
         }
 
-        // Costo de avances de stock
+        // Stock advance cost.
         cost += self.stock_advance_cost / STOCK_ADVANCE_DIVISOR;
 
-        // NO sumar target_burial_penalty ni deadlock_count aquí.
-        // Esas señales van SOLO a progress_score y successor_ordering.
+        // Do NOT add target_burial_penalty or deadlock_count here.
+        // Those signals belong ONLY in progress_score and successor_ordering.
 
         cost
     }
 
-    /// Score de progreso para checkpoints (mayor = mejor).
-    /// Incorpora señales thoughtful: el solver penaliza checkpoints que
-    /// mantienen targets enterrados o deadlocks activos.
+    /// Progress score for checkpoints (higher is better).
+    /// Incorporates thoughtful signals: the solver penalizes checkpoints that
+    /// keep targets buried or deadlocks active.
     pub fn progress_score(&self) -> i64 {
         let mut score = self.foundation_count * PROGRESS_FOUNDATION_WEIGHT
             + self.face_up * PROGRESS_FACE_UP_WEIGHT
@@ -339,9 +339,9 @@ impl BoardEval {
             - self.stranded_blockers * PROGRESS_STRANDED_BLOCKER_PENALTY
             - self.stock_target_penalty;
 
-        // Near-autoplay bonus: estados con pocas cartas ocultas están cerca
-        // de auto-play (hidden==0 → juego esencialmente ganado).
-        // Bonus cuadrático que crece exponencialmente al acercarse a 0.
+        // Near-autoplay bonus: states with few hidden cards are close to
+        // auto-play (hidden==0 -> essentially won).
+        // Quadratic bonus that grows quickly as hidden approaches 0.
         if self.hidden > 0 && self.hidden <= AUTOPLAY_PROXIMITY_THRESHOLD {
             let proximity = (AUTOPLAY_PROXIMITY_THRESHOLD + 1 - self.hidden) as i64;
             score += proximity * proximity * PROGRESS_AUTOPLAY_PROXIMITY;
@@ -350,12 +350,12 @@ impl BoardEval {
         score
     }
 
-    /// Verifica si una carta tiene destino válido en alguna columna del tableau.
-    /// Usado por blocker viability analysis para determinar si un bloqueador
-    /// puede moverse fuera del camino de un target enterrado.
+    /// Checks whether a card has a valid destination in any tableau column.
+    /// Used by blocker viability analysis to determine whether a blocker can move
+    /// out of the way of a buried target.
     fn card_has_column_destination(board: &KlondikeBoard, card: Card, exclude_col: usize) -> bool {
         if card.value == 13 {
-            // Rey: necesita columna vacía
+            // King: needs an empty column.
             return board
                 .columns
                 .iter()
@@ -375,7 +375,7 @@ impl BoardEval {
         false
     }
 
-    /// Penalización de waste compartida entre heuristic_cost y progress_score.
+    /// Waste penalty shared by heuristic_cost and progress_score.
     fn waste_penalty(&self) -> i64 {
         let mut p = 0;
         if self.stock_remaining <= WASTE_THRESHOLD_STOCK
@@ -394,15 +394,15 @@ impl BoardEval {
 // CheckpointPolicy
 // ═══════════════════════════════════════════
 
-/// Política de checkpoints: encapsula todas las decisiones sobre
-/// cuándo hacer checkpoint, cuándo adoptar, y cuándo abandonar.
+/// Checkpoint policy: encapsulates all decisions about when to checkpoint,
+/// when to adopt, and when to give up.
 pub struct CheckpointPolicy {
     pub max_adoptions: u32,
     pub base_limits: [u64; 7],
 }
 
 impl CheckpointPolicy {
-    /// Política por defecto: los valores que actualmente usa el solver.
+    /// Default policy: the values currently used by the solver.
     pub fn default_policy() -> Self {
         Self {
             max_adoptions: MAX_CHECKPOINTS,
@@ -410,7 +410,7 @@ impl CheckpointPolicy {
         }
     }
 
-    /// Calcula el node_limit base según la dificultad del tablero.
+    /// Calculates the base node_limit from board difficulty.
     pub fn base_limit_for(&self, board: &KlondikeBoard) -> u64 {
         let fc = board.total_foundation_count();
         let hidden: usize = board.columns.iter().map(|c| c.num_face_down()).sum();
@@ -431,8 +431,8 @@ impl CheckpointPolicy {
             self.base_limits[0]
         }
     }
-    /// Decide si un delta de progreso es adoptable dada la fase actual.
-    /// `foundation_count`: número real de cartas en foundations (no derivado del score).
+    /// Decides whether a progress delta is adoptable given the current phase.
+    /// `foundation_count`: real number of cards in foundations (not derived from score).
     pub fn is_adoptable(&self, start_score: i64, best_score: i64, foundation_count: usize) -> bool {
         let delta = best_score - start_score;
 
