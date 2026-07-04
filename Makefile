@@ -1,4 +1,4 @@
-.PHONY: build-rust generate-bindings xcframework clean check test
+.PHONY: build-rust generate-bindings xcframework clean check test coverage-rust
 
 # Configuration
 MAKEFILE_DIR := $(CURDIR)/
@@ -18,6 +18,10 @@ check:
 # Run Rust tests
 test:
 	cd "$(CRATE_DIR)" && cargo test
+
+# Generate Rust coverage report with the fast test suite
+coverage-rust:
+	"$(MAKEFILE_DIR)scripts/coverage-rust.sh"
 
 # Build for both architectures
 build-rust:
