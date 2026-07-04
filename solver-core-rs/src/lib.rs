@@ -88,6 +88,10 @@ fn bounded_index(value: i32, len: usize) -> Option<usize> {
     }
 }
 
+fn bounded_index_u8(value: i32, len: usize) -> Option<u8> {
+    u8::try_from(bounded_index(value, len)?).ok()
+}
+
 #[allow(dead_code)]
 fn bounded_index_inclusive(value: i32, len: usize) -> Option<usize> {
     let idx = nonneg_to_usize(value)?;
@@ -406,9 +410,9 @@ fn desc_to_klondike_move(
 ) -> Option<klondike::moves::KlondikeMove> {
     match desc.move_type.as_str() {
         "columnToColumn" => {
-            let src = desc.source as u8;
-            let dest = desc.destination as u8;
-            let count = desc.card_count as u8;
+            let src = bounded_index_u8(desc.source, board.columns.len())?;
+            let dest = bounded_index_u8(desc.destination, board.columns.len())?;
+            let count = u8::try_from(positive_to_usize(desc.card_count)?).ok()?;
             Some(klondike::moves::KlondikeMove::ColumnToColumn {
                 source: src,
                 destination: dest,
@@ -416,12 +420,12 @@ fn desc_to_klondike_move(
             })
         }
         "columnToFoundation" => {
-            let src = desc.source as u8;
+            let src = bounded_index_u8(desc.source, board.columns.len())?;
             let card = board.columns[src as usize].top_face_up()?;
             Some(klondike::moves::KlondikeMove::ColumnToFoundation { source: src, card })
         }
         "stockToColumn" => {
-            let dest = desc.destination as u8;
+            let dest = bounded_index_u8(desc.destination, board.columns.len())?;
             let card = board.stock_pile_card()?;
             Some(klondike::moves::KlondikeMove::StockPileToColumn {
                 card,
@@ -435,22 +439,30 @@ fn desc_to_klondike_move(
         "foundationToColumn" => {
             let suit = Suit::from_u8(desc.card_suit)?;
             let card = board.top_of_foundation(suit)?;
-            let dest = desc.destination as u8;
+            let dest = bounded_index_u8(desc.destination, board.columns.len())?;
             Some(klondike::moves::KlondikeMove::FoundationToColumn {
                 destination: dest,
                 card,
             })
         }
         "stockAdvance" => {
-            let beginning_index = desc.source as u8;
-            let increment = desc.destination as u8;
+            let beginning_index = u8::try_from(bounded_index_inclusive(
+                desc.source,
+                board.stock_len as usize,
+            )?)
+            .ok()?;
+            let increment = u8::try_from(positive_to_usize(desc.destination)?).ok()?;
             Some(klondike::moves::KlondikeMove::StockPileAdvance {
                 beginning_index,
                 increment,
             })
         }
         "stockRecycle" => {
-            let source_index = desc.source as u8;
+            let source_index = u8::try_from(bounded_index_inclusive(
+                desc.source,
+                board.stock_len as usize,
+            )?)
+            .ok()?;
             Some(klondike::moves::KlondikeMove::StockPileRecycle { source_index })
         }
         _ => None,
@@ -947,3 +959,380 @@ fn desc_to_tripeaks_move(desc: &TriPeaksMoveDesc) -> Option<tripeaks::board::Tri
 
 // ─── UniFFI scaffolding ───
 uniffi::include_scaffolding!("solver_core");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(suit: Suit, value: u8) -> Card {
+        Card::new(suit, value)
+    }
+
+    fn spider_board() -> spider::board::SpiderBoard {
+        let columns = (0..spider::board::SpiderBoard::NUM_COLUMNS)
+            .map(|_| spider::column::SpiderColumn::new(vec![], vec![card(Suit::Spade, 13)]))
+            .collect();
+        spider::board::SpiderBoard::new(columns, vec![], 0)
+    }
+
+    fn freecell_board() -> freecell::board::FreeCellBoard {
+        let free_cells = [Some(card(Suit::Club, 1)), None, None, None];
+        let foundation = [vec![card(Suit::Club, 1)], vec![], vec![], vec![]];
+        let tableau = [
+            vec![card(Suit::Heart, 7), card(Suit::Club, 6)],
+            vec![card(Suit::Diamond, 8)],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        ];
+        freecell::board::FreeCellBoard::new(free_cells, foundation, tableau)
+    }
+
+    fn klondike_board() -> klondike::board::KlondikeBoard {
+        let mut board = klondike::board::KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 1), false);
+        board.columns[1].push(card(Suit::Diamond, 2), false);
+        board.foundation[Suit::Club as usize] = 1;
+        board.stock[0] = card(Suit::Heart, 5);
+        board.stock_len = 1;
+        board.stock_index = 1;
+        board.compute_signature();
+        board
+    }
+
+    #[test]
+    fn nonneg_to_usize_rejects_negative() {
+        assert_eq!(nonneg_to_usize(-1), None);
+        assert_eq!(nonneg_to_usize(0), Some(0));
+    }
+
+    #[test]
+    fn positive_to_usize_rejects_zero_and_negative() {
+        assert_eq!(positive_to_usize(-1), None);
+        assert_eq!(positive_to_usize(0), None);
+        assert_eq!(positive_to_usize(1), Some(1));
+    }
+
+    #[test]
+    fn bounded_index_rejects_negative_and_len() {
+        assert_eq!(bounded_index(-1, 3), None);
+        assert_eq!(bounded_index(3, 3), None);
+        assert_eq!(bounded_index(2, 3), Some(2));
+    }
+
+    #[test]
+    fn desc_to_spider_move_rejects_bad_type() {
+        let board = spider_board();
+        let desc = SpiderMoveDesc {
+            move_type: "bad".into(),
+            source: 0,
+            destination: 1,
+            card_count: 1,
+        };
+
+        assert_eq!(desc_to_spider_move(&desc, &board), None);
+    }
+
+    #[test]
+    fn desc_to_spider_move_rejects_negative_source_destination() {
+        let board = spider_board();
+        let mut desc = SpiderMoveDesc {
+            move_type: "columnToColumn".into(),
+            source: -1,
+            destination: 1,
+            card_count: 1,
+        };
+        assert_eq!(desc_to_spider_move(&desc, &board), None);
+
+        desc.source = 0;
+        desc.destination = -1;
+        assert_eq!(desc_to_spider_move(&desc, &board), None);
+    }
+
+    #[test]
+    fn desc_to_spider_move_rejects_zero_card_count() {
+        let board = spider_board();
+        let desc = SpiderMoveDesc {
+            move_type: "columnToColumn".into(),
+            source: 0,
+            destination: 1,
+            card_count: 0,
+        };
+
+        assert_eq!(desc_to_spider_move(&desc, &board), None);
+    }
+
+    #[test]
+    fn desc_to_pyramid_move_rejects_out_of_bounds_pair() {
+        let desc = PyramidMoveDesc {
+            move_type: "pairPP".into(),
+            index_a: 0,
+            index_b: pyramid::board::PyramidBoard::PYRAMID_SIZE as i32,
+        };
+
+        assert_eq!(desc_to_pyramid_move(&desc), None);
+    }
+
+    #[test]
+    fn desc_to_pyramid_move_accepts_stock_moves() {
+        assert_eq!(
+            desc_to_pyramid_move(&PyramidMoveDesc {
+                move_type: "stockAdvance".into(),
+                index_a: -1,
+                index_b: -1,
+            }),
+            Some(pyramid::board::PyramidMove::StockAdvance)
+        );
+        assert_eq!(
+            desc_to_pyramid_move(&PyramidMoveDesc {
+                move_type: "stockReset".into(),
+                index_a: -1,
+                index_b: -1,
+            }),
+            Some(pyramid::board::PyramidMove::StockReset)
+        );
+    }
+
+    #[test]
+    fn pyramid_move_to_desc_covers_all_variants() {
+        let deck = vec![card(Suit::Club, 1)];
+        let cases = [
+            (
+                pyramid::board::PyramidMove::StockAdvance,
+                "stockAdvance",
+                -1,
+                -1,
+            ),
+            (
+                pyramid::board::PyramidMove::StockReset,
+                "stockReset",
+                -1,
+                -1,
+            ),
+            (
+                pyramid::board::PyramidMove::RemovePairWastePyramid { pyramid_index: 3 },
+                "pairWP",
+                3,
+                -1,
+            ),
+            (
+                pyramid::board::PyramidMove::RemovePairPyramidPyramid { i: 4, j: 5 },
+                "pairPP",
+                4,
+                5,
+            ),
+            (
+                pyramid::board::PyramidMove::KingToFoundationPyramid { index: 6 },
+                "kingPyramid",
+                6,
+                -1,
+            ),
+            (
+                pyramid::board::PyramidMove::KingToFoundationWaste,
+                "kingWaste",
+                -1,
+                -1,
+            ),
+            (pyramid::board::PyramidMove::Deal { deck }, "deal", -1, -1),
+        ];
+
+        for (the_move, move_type, index_a, index_b) in cases {
+            let desc = pyramid_move_to_desc(&the_move);
+            assert_eq!(desc.move_type, move_type);
+            assert_eq!(desc.index_a, index_a);
+            assert_eq!(desc.index_b, index_b);
+        }
+    }
+
+    #[test]
+    fn desc_to_tripeaks_move_rejects_negative_and_out_of_bounds() {
+        assert_eq!(
+            desc_to_tripeaks_move(&TriPeaksMoveDesc {
+                move_type: "tableauToWaste".into(),
+                tableau_index: -1,
+            }),
+            None
+        );
+        assert_eq!(
+            desc_to_tripeaks_move(&TriPeaksMoveDesc {
+                move_type: "tableauToWaste".into(),
+                tableau_index: tripeaks::board::TriPeaksBoard::TABLEAU_SIZE as i32,
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn tripeaks_move_to_desc_covers_draw_and_tableau() {
+        let tableau = tripeaks_move_to_desc(&tripeaks::board::TriPeaksMove::TableauToWaste {
+            tableau_index: 7,
+        });
+        assert_eq!(tableau.move_type, "tableauToWaste");
+        assert_eq!(tableau.tableau_index, 7);
+
+        let draw = tripeaks_move_to_desc(&tripeaks::board::TriPeaksMove::DrawFromStock);
+        assert_eq!(draw.move_type, "drawFromStock");
+        assert_eq!(draw.tableau_index, -1);
+    }
+
+    #[test]
+    fn desc_to_freecell_move_rejects_invalid_tableau_and_freecell_indices() {
+        let board = freecell_board();
+        let invalids = [
+            FreeCellMoveDesc {
+                move_type: "tableauToTableau".into(),
+                source: -1,
+                destination: 1,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            FreeCellMoveDesc {
+                move_type: "tableauToFreeCell".into(),
+                source: 0,
+                destination: freecell::board::FreeCellBoard::NUM_FREE_CELLS as i32,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            FreeCellMoveDesc {
+                move_type: "freeCellToTableau".into(),
+                source: -1,
+                destination: 0,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            FreeCellMoveDesc {
+                move_type: "foundationToTableau".into(),
+                source: 0,
+                destination: freecell::board::FreeCellBoard::NUM_TABLEAU as i32,
+                card_count: 1,
+                card_suit: Suit::Club as u8,
+                card_value: 1,
+            },
+        ];
+
+        for desc in invalids {
+            assert_eq!(desc_to_freecell_move(&desc, &board), None);
+        }
+    }
+
+    #[test]
+    fn desc_to_klondike_move_rejects_negative_and_out_of_bounds_without_panic() {
+        let board = klondike_board();
+        let invalids = [
+            KlondikeMoveDesc {
+                move_type: "columnToColumn".into(),
+                source: -1,
+                destination: 1,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            KlondikeMoveDesc {
+                move_type: "columnToFoundation".into(),
+                source: klondike::board::KlondikeBoard::NUM_COLUMNS as i32,
+                destination: -1,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            KlondikeMoveDesc {
+                move_type: "stockToColumn".into(),
+                source: -1,
+                destination: -1,
+                card_count: 1,
+                card_suit: 0,
+                card_value: 0,
+            },
+            KlondikeMoveDesc {
+                move_type: "foundationToColumn".into(),
+                source: Suit::Club as i32,
+                destination: klondike::board::KlondikeBoard::NUM_COLUMNS as i32,
+                card_count: 1,
+                card_suit: Suit::Club as u8,
+                card_value: 1,
+            },
+            KlondikeMoveDesc {
+                move_type: "stockAdvance".into(),
+                source: -1,
+                destination: 1,
+                card_count: 0,
+                card_suit: 0,
+                card_value: 0,
+            },
+            KlondikeMoveDesc {
+                move_type: "stockRecycle".into(),
+                source: board.stock_len as i32 + 1,
+                destination: -1,
+                card_count: 0,
+                card_suit: 0,
+                card_value: 0,
+            },
+        ];
+
+        for desc in invalids {
+            assert_eq!(desc_to_klondike_move(&desc, &board), None);
+        }
+    }
+
+    #[test]
+    fn desc_to_klondike_move_uses_real_board_state_safely() {
+        let board = klondike_board();
+
+        assert_eq!(
+            desc_to_klondike_move(
+                &KlondikeMoveDesc {
+                    move_type: "columnToFoundation".into(),
+                    source: 0,
+                    destination: -1,
+                    card_count: 1,
+                    card_suit: 0,
+                    card_value: 0,
+                },
+                &board,
+            ),
+            Some(klondike::moves::KlondikeMove::ColumnToFoundation {
+                source: 0,
+                card: card(Suit::Club, 1),
+            })
+        );
+        assert_eq!(
+            desc_to_klondike_move(
+                &KlondikeMoveDesc {
+                    move_type: "stockToFoundation".into(),
+                    source: -1,
+                    destination: -1,
+                    card_count: 1,
+                    card_suit: 0,
+                    card_value: 0,
+                },
+                &board,
+            ),
+            Some(klondike::moves::KlondikeMove::StockPileToFoundation {
+                card: card(Suit::Heart, 5),
+            })
+        );
+        assert_eq!(
+            desc_to_klondike_move(
+                &KlondikeMoveDesc {
+                    move_type: "foundationToColumn".into(),
+                    source: Suit::Club as i32,
+                    destination: 1,
+                    card_count: 1,
+                    card_suit: Suit::Club as u8,
+                    card_value: 1,
+                },
+                &board,
+            ),
+            Some(klondike::moves::KlondikeMove::FoundationToColumn {
+                destination: 1,
+                card: card(Suit::Club, 1),
+            })
+        );
+    }
+}

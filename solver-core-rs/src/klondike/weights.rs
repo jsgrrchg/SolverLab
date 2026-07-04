@@ -199,5 +199,5 @@ pub const CHECKPOINT_BASE_LIMITS: [u64; 7] = [
     2_200_000, // hidden 13-15 (Upper-mid)
     3_500_000, // hidden 16-18 (Hard)
     8_000_000, // hidden 19+ (Very hard)
-    800_000, // endgame: fc > 30, hidden <= 6; matched to base to avoid losing nearly won games
+    800_000,   // endgame: fc > 30, hidden <= 6; matched to base to avoid losing nearly won games
 ];
