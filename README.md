@@ -1,5 +1,7 @@
 # SolverLab
 
+<img width="1312" height="904" alt="Captura de pantalla 2026-07-04 a las 17 37 16" src="https://github.com/user-attachments/assets/0c62e36a-b4e2-479a-8faa-d9311884934b" />
+
 SolverLab is a Rust solitaire solver with deterministic solver logic and a SwiftUI dashboard for prototyping integration with native Swift games. The Rust core is exposed through UniFFI and is designed to balance speed with CPU and memory usage so it can run on modern processors, including phones, while streaming useful progress back to a graphical host app through replayable moves, partial results, progress tokens, and adopted checkpoints.
 
 ## Supported Games
