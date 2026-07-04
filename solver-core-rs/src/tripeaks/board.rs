@@ -364,3 +364,224 @@ fn encode_opt_card(card: Option<Card>) -> u64 {
         None => 0xFF,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Suit;
+
+    fn card(value: u8) -> Card {
+        Card::new(Suit::Club, value)
+    }
+
+    fn board_with_values(
+        values: [u8; TriPeaksBoard::TABLEAU_SIZE],
+        stock: Vec<Card>,
+        waste: Vec<Card>,
+    ) -> TriPeaksBoard {
+        TriPeaksBoard::new(
+            values.into_iter().map(|value| Some(card(value))).collect(),
+            stock,
+            waste,
+        )
+    }
+
+    fn simple_board() -> TriPeaksBoard {
+        board_with_values(
+            [
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                13, 1, 2,
+            ],
+            vec![card(9), card(10)],
+            vec![card(5)],
+        )
+    }
+
+    fn remove_indices(board: &mut TriPeaksBoard, indices: &[usize]) {
+        for &idx in indices {
+            board.tableau[idx] = None;
+        }
+        board.signature = compute_signature(&board.tableau, &board.stock, &board.waste);
+    }
+
+    #[test]
+    fn row_maps_all_tableau_indices() {
+        for idx in 0..=2 {
+            assert_eq!(TriPeaksBoard::row(idx), 0);
+        }
+        for idx in 3..=8 {
+            assert_eq!(TriPeaksBoard::row(idx), 1);
+        }
+        for idx in 9..=17 {
+            assert_eq!(TriPeaksBoard::row(idx), 2);
+        }
+        for idx in 18..=27 {
+            assert_eq!(TriPeaksBoard::row(idx), 3);
+        }
+    }
+
+    #[test]
+    fn parents_mapping_matches_layout() {
+        assert_eq!(TriPeaksBoard::parents(0), Vec::<usize>::new());
+        assert_eq!(TriPeaksBoard::parents(3), vec![0]);
+        assert_eq!(TriPeaksBoard::parents(4), vec![0]);
+        assert_eq!(TriPeaksBoard::parents(10), vec![3, 4]);
+        assert_eq!(TriPeaksBoard::parents(17), vec![8]);
+        assert_eq!(TriPeaksBoard::parents(18), vec![9]);
+        assert_eq!(TriPeaksBoard::parents(27), vec![17]);
+    }
+
+    #[test]
+    fn children_mapping_matches_layout() {
+        assert_eq!(TriPeaksBoard::children(0), vec![3, 4]);
+        assert_eq!(TriPeaksBoard::children(1), vec![5, 6]);
+        assert_eq!(TriPeaksBoard::children(2), vec![7, 8]);
+        assert_eq!(TriPeaksBoard::children(3), vec![9, 10]);
+        assert_eq!(TriPeaksBoard::children(8), vec![16, 17]);
+        assert_eq!(TriPeaksBoard::children(17), vec![26, 27]);
+        assert_eq!(TriPeaksBoard::children(18), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn exposed_indices_only_include_unblocked_cards() {
+        let mut board = simple_board();
+
+        assert_eq!(
+            board.exposed_tableau_indices(),
+            (18..=27).collect::<Vec<_>>()
+        );
+        assert!(!board.is_exposed(9));
+        assert!(!board.is_exposed(0));
+
+        remove_indices(&mut board, &[18, 19]);
+        assert!(board.is_exposed(9));
+        assert!(!board.is_exposed(10));
+
+        remove_indices(&mut board, &[3, 4]);
+        assert!(board.is_exposed(0));
+    }
+
+    #[test]
+    fn is_adjacent_handles_regular_and_ace_king_wrap() {
+        assert!(is_adjacent(card(5), card(6)));
+        assert!(is_adjacent(card(6), card(5)));
+        assert!(is_adjacent(card(1), card(13)));
+        assert!(is_adjacent(card(13), card(1)));
+        assert!(!is_adjacent(card(5), card(5)));
+        assert!(!is_adjacent(card(5), card(7)));
+    }
+
+    #[test]
+    fn apply_tableau_to_waste_rejects_unexposed_or_non_adjacent() {
+        let board = simple_board();
+
+        assert_eq!(
+            TriPeaksMove::TableauToWaste { tableau_index: 0 }.apply(&board),
+            None
+        );
+        assert_eq!(
+            TriPeaksMove::TableauToWaste { tableau_index: 20 }.apply(&board),
+            None
+        );
+        assert_eq!(
+            TriPeaksMove::TableauToWaste {
+                tableau_index: TriPeaksBoard::TABLEAU_SIZE
+            }
+            .apply(&board),
+            None
+        );
+    }
+
+    #[test]
+    fn apply_tableau_to_waste_removes_card_and_pushes_waste() {
+        let board = simple_board();
+        let moved = TriPeaksMove::TableauToWaste { tableau_index: 18 }
+            .apply(&board)
+            .expect("exposed adjacent card should move to waste");
+
+        assert_eq!(moved.tableau[18], None);
+        assert_eq!(moved.waste, vec![card(5), card(6)]);
+        assert_eq!(moved.stock, board.stock);
+        assert_eq!(moved.remaining_tableau(), TriPeaksBoard::TABLEAU_SIZE - 1);
+        assert_ne!(moved.signature, board.signature);
+    }
+
+    #[test]
+    fn draw_from_stock_moves_only_when_no_tableau_moves() {
+        let mut board = board_with_values([5; TriPeaksBoard::TABLEAU_SIZE], vec![], vec![card(9)]);
+        board.waste = vec![card(5)];
+        board.stock = vec![card(11), card(12)];
+        board.signature = compute_signature(&board.tableau, &board.stock, &board.waste);
+
+        assert!(TriPeaksMove::find_tableau_to_waste_moves(&board).is_empty());
+        assert_eq!(
+            TriPeaksMove::find_draw_from_stock_moves(&board),
+            vec![TriPeaksMove::DrawFromStock]
+        );
+
+        let drawn = TriPeaksMove::DrawFromStock
+            .apply(&board)
+            .expect("stock card should draw to waste");
+        assert_eq!(drawn.stock, vec![card(11)]);
+        assert_eq!(drawn.waste, vec![card(5), card(12)]);
+
+        let mut board_with_tableau_move = simple_board();
+        board_with_tableau_move.waste = vec![card(5)];
+        assert_eq!(
+            TriPeaksMove::find_tableau_to_waste_moves(&board_with_tableau_move),
+            vec![TriPeaksMove::TableauToWaste { tableau_index: 18 }]
+        );
+        assert!(TriPeaksMove::find_draw_from_stock_moves(&board_with_tableau_move).is_empty());
+    }
+
+    #[test]
+    fn deal_rejects_wrong_deck_size_and_initializes_stock_waste() {
+        let deck = Card::standard_deck();
+
+        assert_eq!(
+            TriPeaksMove::Deal {
+                deck: deck[..51].to_vec()
+            }
+            .apply(&simple_board()),
+            None
+        );
+
+        let board = TriPeaksMove::Deal { deck: deck.clone() }
+            .apply(&simple_board())
+            .expect("standard deck should deal");
+
+        assert_eq!(board.tableau.len(), TriPeaksBoard::TABLEAU_SIZE);
+        assert_eq!(board.tableau[0], Some(deck[0]));
+        assert_eq!(board.tableau[27], Some(deck[27]));
+        assert_eq!(board.stock, deck[28..51].to_vec());
+        assert_eq!(board.waste, vec![deck[51]]);
+    }
+
+    #[test]
+    fn signature_changes_when_state_changes() {
+        let board = simple_board();
+
+        let mut without_tableau_card = board.clone();
+        remove_indices(&mut without_tableau_card, &[18]);
+
+        let mut with_different_stock = board.clone();
+        with_different_stock.stock.pop();
+        with_different_stock.signature = compute_signature(
+            &with_different_stock.tableau,
+            &with_different_stock.stock,
+            &with_different_stock.waste,
+        );
+
+        let mut with_different_waste = board.clone();
+        with_different_waste.waste.push(card(6));
+        with_different_waste.signature = compute_signature(
+            &with_different_waste.tableau,
+            &with_different_waste.stock,
+            &with_different_waste.waste,
+        );
+
+        assert_ne!(board.signature, without_tableau_card.signature);
+        assert_ne!(board.signature, with_different_stock.signature);
+        assert_ne!(board.signature, with_different_waste.signature);
+    }
+}
