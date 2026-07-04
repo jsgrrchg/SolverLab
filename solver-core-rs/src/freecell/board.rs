@@ -1,23 +1,23 @@
 use crate::common::card::{Card, Suit};
 
-/// Tablero de FreeCell: 4 free cells, 4 foundations y 8 columnas de tableau.
+/// FreeCell board: 4 free cells, 4 foundations, and 8 tableau columns.
 #[derive(Debug, Clone)]
 pub struct FreeCellBoard {
-    /// 4 slots de free cell: `None` significa vacio.
+    /// 4 free cell slots: `None` means empty.
     pub free_cells: [Option<Card>; 4],
-    /// Pila de foundation indexada por ordinal del palo.
+    /// Foundation pile indexed by suit ordinal.
     pub foundation: [Vec<Card>; 4],
-    /// 8 columnas de tableau.
+    /// 8 tableau columns.
     pub tableau: [Vec<Card>; 8],
     pub signature: u64,
 }
 
 impl FreeCellBoard {
-    // Constantes de tamaño del tablero de FreeCell.
+    // FreeCell board-size constants.
     pub const NUM_FREE_CELLS: usize = 4;
     pub const NUM_TABLEAU: usize = 8;
 
-    // Constructor principal: crea tablero y calcula su firma canónica.
+    // Main constructor: creates a board and computes its canonical signature.
     pub fn new(
         free_cells: [Option<Card>; 4],
         foundation: [Vec<Card>; 4],
@@ -33,46 +33,46 @@ impl FreeCellBoard {
     }
 
     pub fn top_of_foundation(&self, suit: Suit) -> Option<Card> {
-        // Devuelve la carta tope de la foundation del palo indicado.
+        // Returns the top foundation card for the requested suit.
         self.foundation[suit as usize].last().copied()
     }
 
     pub fn foundation_count(&self, suit: Suit) -> usize {
-        // Cantidad de cartas en la foundation de un palo.
+        // Number of cards in one suit foundation.
         self.foundation[suit as usize].len()
     }
 
     pub fn total_foundation_count(&self) -> usize {
-        // Total acumulado en las 4 foundations.
+        // Total accumulated across the 4 foundations.
         self.foundation.iter().map(|s| s.len()).sum()
     }
 
     pub fn can_add_to_foundation(&self, card: Card) -> bool {
-        // En foundation solo entra la siguiente carta de su palo (A,2,3,...,K).
+        // A foundation only accepts the next card of its suit (A,2,3,...,K).
         let count = self.foundation[card.suit as usize].len();
         card.value as usize == count + 1
     }
 
     pub fn foundation_plus_card(&self, card: Card) -> [Vec<Card>; 4] {
-        // Retorna una copia de foundations con la carta agregada a su palo.
+        // Returns a copy of foundations with the card added to its suit.
         let mut f = self.foundation.clone();
         f[card.suit as usize].push(card);
         f
     }
 
     pub fn extract_from_foundation(&self, suit: Suit) -> Option<(Card, [Vec<Card>; 4])> {
-        // Extrae el tope de la foundation del palo y retorna (carta, foundations nuevas).
+        // Extracts the top card from the suit foundation and returns (card, new foundations).
         let mut f = self.foundation.clone();
         let card = f[suit as usize].pop()?;
         Some((card, f))
     }
 
     pub fn top_of_tableau(&self, i: usize) -> Option<Card> {
-        // Devuelve la carta tope de la columna de tableau.
+        // Returns the top card of the tableau column.
         self.tableau[i].last().copied()
     }
 
-    /// Verifica si una corrida es valida (descendente y colores alternados).
+    /// Checks whether a run is valid (descending with alternating colors).
     pub fn is_valid_tableau_run(run: &[Card]) -> bool {
         if run.is_empty() {
             return false;
@@ -88,7 +88,7 @@ impl FreeCellBoard {
         true
     }
 
-    /// Indica si la corrida puede colocarse en la columna destino.
+    /// Indicates whether the run can be placed on the destination column.
     pub fn can_add_run_to_tableau(&self, run: &[Card], col: usize) -> bool {
         let first = match run.first() {
             Some(c) => c,
@@ -103,7 +103,7 @@ impl FreeCellBoard {
         }
     }
 
-    /// Largo maximo de corrida valida desde el tope de la columna.
+    /// Maximum valid run length from the top of the column.
     pub fn max_tableau_run_length(&self, col: usize) -> usize {
         let column = &self.tableau[col];
         if column.is_empty() {
@@ -122,7 +122,7 @@ impl FreeCellBoard {
     }
 
     pub fn tableau_run_from_top(&self, col: usize, length: usize) -> Option<Vec<Card>> {
-        // Extrae `length` cartas desde el tope y valida que formen corrida legal.
+        // Extracts `length` cards from the top and validates that they form a legal run.
         let column = &self.tableau[col];
         if length < 1 || length > column.len() {
             return None;
@@ -136,19 +136,19 @@ impl FreeCellBoard {
     }
 
     pub fn empty_free_cells(&self) -> usize {
-        // Cantidad de slots libres en free cells.
+        // Number of free slots in free cells.
         self.free_cells.iter().filter(|c| c.is_none()).count()
     }
 
     pub fn empty_tableau_columns(&self) -> usize {
-        // Cantidad de columnas vacías en tableau.
+        // Number of empty tableau columns.
         self.tableau.iter().filter(|c| c.is_empty()).count()
     }
 
-    /// Regla de FreeCell para cantidad maxima de cartas movibles.
+    /// FreeCell rule for maximum number of movable cards.
     pub fn max_movable_cards(&self, dest_col: usize) -> usize {
-        // Formula clasica:
-        // (free cells vacias + 1) * 2^(columnas vacias utilizables)
+        // Classic formula:
+        // (empty free cells + 1) * 2^(usable empty columns)
         let dest_empty = self.tableau[dest_col].is_empty();
         let usable = self
             .empty_tableau_columns()
@@ -158,7 +158,7 @@ impl FreeCellBoard {
     }
 }
 
-/// Movimientos posibles en FreeCell.
+/// Possible FreeCell moves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FreeCellMove {
     Deal {
@@ -195,7 +195,7 @@ pub enum FreeCellMove {
 }
 
 impl FreeCellMove {
-    // Indica si el movimiento termina en foundation.
+    // Indicates whether the move ends in foundation.
     pub fn is_foundation_move(&self) -> bool {
         matches!(
             self,
@@ -203,14 +203,13 @@ impl FreeCellMove {
         )
     }
 
-    // Indica si el movimiento extrae una carta desde foundation.
+    // Indicates whether the move extracts a card from foundation.
     pub fn is_from_foundation(&self) -> bool {
         matches!(self, FreeCellMove::FoundationToTableau { .. })
     }
 
     pub fn apply(&self, board: &FreeCellBoard) -> Option<FreeCellBoard> {
-        // Valida precondiciones del movimiento y, si son correctas,
-        // retorna el siguiente tablero inmutable.
+        // Validates move preconditions and, if valid, returns the next immutable board.
         match self {
             FreeCellMove::Deal { deck } => apply_fc_deal(deck),
 
@@ -332,9 +331,9 @@ fn apply_fc_deal(deck: &[Card]) -> Option<FreeCellBoard> {
         return None;
     }
     let mut tableau: [Vec<Card>; 8] = Default::default();
-    // Reparte en orden por filas sobre 8 columnas:
-    // columnas 0..3 reciben 7 cartas y 4..7 reciben 6 cartas
-    // (patron clasico de FreeCell: 7/7/7/7/6/6/6/6).
+    // Deals by rows across 8 columns:
+    // columns 0..3 receive 7 cards and 4..7 receive 6 cards
+    // (classic FreeCell pattern: 7/7/7/7/6/6/6/6).
     for c in 0..8 {
         let num_cards = if c < 4 { 7 } else { 6 };
         for row in 0..num_cards {
@@ -352,7 +351,7 @@ fn apply_fc_deal(deck: &[Card]) -> Option<FreeCellBoard> {
     ))
 }
 
-// -- Generacion de movimientos --
+// -- Move generation --
 
 impl FreeCellMove {
     pub fn find_tableau_to_foundation(board: &FreeCellBoard) -> Vec<FreeCellMove> {
@@ -383,13 +382,13 @@ impl FreeCellMove {
     }
 
     pub fn find_tableau_to_freecell(board: &FreeCellBoard) -> Vec<FreeCellMove> {
-        // Enumera movimientos desde el tope de tableau hacia cualquier free cell disponible.
+        // Enumerates moves from tableau tops to any available free cell.
         let mut moves = Vec::new();
-        // Poda rapida: si no hay slots libres, no existen jugadas hacia free cell.
+        // Fast pruning: if there are no free slots, no free-cell moves exist.
         if board.empty_free_cells() == 0 {
             return moves;
         }
-        // Genera todos los movimientos unitarios top(tableau) -> cada free cell vacia.
+        // Generates all single-card top(tableau) -> each empty free cell moves.
         for src in 0..8 {
             if let Some(card) = board.top_of_tableau(src) {
                 for ci in 0..4 {
@@ -408,7 +407,7 @@ impl FreeCellMove {
 
     pub fn find_freecell_to_tableau(board: &FreeCellBoard) -> Vec<FreeCellMove> {
         let mut moves = Vec::new();
-        // Para cada carta en free cell, prueba todos los destinos de tableau validos.
+        // For each card in a free cell, try all valid tableau destinations.
         for ci in 0..4 {
             if let Some(card) = board.free_cells[ci] {
                 for dest in 0..8 {
@@ -426,7 +425,7 @@ impl FreeCellMove {
     }
 
     pub fn find_tableau_to_tableau(board: &FreeCellBoard) -> Vec<FreeCellMove> {
-        // Enumera traslados entre columnas considerando corridas válidas y movilidad máxima.
+        // Enumerates column transfers considering valid runs and maximum mobility.
         let mut moves = Vec::new();
         for src in 0..8 {
             let max_run = board.max_tableau_run_length(src);
@@ -437,12 +436,12 @@ impl FreeCellMove {
                 if dest == src {
                     continue;
                 }
-                // No puede mover mas de lo permitido por la regla de movilidad.
+                // Cannot move more than allowed by the mobility rule.
                 let allowed = max_run.min(board.max_movable_cards(dest));
                 if allowed == 0 {
                     continue;
                 }
-                // Prueba cada largo de corrida valido desde 1..=allowed.
+                // Try each valid run length from 1..=allowed.
                 for length in 1..=allowed {
                     if let Some(run) = board.tableau_run_from_top(src, length) {
                         if board.can_add_run_to_tableau(&run, dest) {
@@ -460,10 +459,10 @@ impl FreeCellMove {
     }
 
     pub fn find_foundation_to_tableau(board: &FreeCellBoard) -> Vec<FreeCellMove> {
-        // Enumera jugadas de retroceso desde foundation hacia tableau.
+        // Enumerates rollback moves from foundation to tableau.
         let mut moves = Vec::new();
-        // Genera movimientos de retroceso (foundation -> tableau):
-        // toma el tope de cada foundation y prueba todos los destinos validos.
+        // Generates rollback moves (foundation -> tableau):
+        // take each foundation top and try all valid destinations.
         for &suit in &Suit::ALL {
             if let Some(card) = board.top_of_foundation(suit) {
                 for dest in 0..8 {
@@ -481,7 +480,7 @@ impl FreeCellMove {
     }
 }
 
-// Igualdad personalizada que ignora la firma precalculada.
+// Custom equality that ignores the precomputed signature.
 impl PartialEq for FreeCellBoard {
     fn eq(&self, other: &Self) -> bool {
         self.free_cells == other.free_cells
@@ -503,15 +502,15 @@ fn compute_signature(
     foundation: &[Vec<Card>; 4],
     tableau: &[Vec<Card>; 8],
 ) -> u64 {
-    // Firma canonica FNV-1a para usar en transposicion/hash.
-    // Se normalizan free cells y columnas de tableau via ordenamiento,
-    // de modo que estados equivalentes compartan la misma firma.
+    // Canonical FNV-1a signature for transposition/hash use.
+    // Free cells and tableau columns are normalized by sorting, so equivalent
+    // states share the same signature.
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
 
     let mut h: u64 = FNV_OFFSET;
 
-    // Foundation ya tiene orden fijo (ordinal del palo).
+    // Foundation already has fixed order (suit ordinal).
     for (idx, pile) in foundation.iter().enumerate() {
         h ^= (idx as u64).wrapping_add(0x100);
         h = h.wrapping_mul(FNV_PRIME);
@@ -521,17 +520,17 @@ fn compute_signature(
         }
     }
 
-    // Free cells canonicas: se ordenan para ignorar permutaciones equivalentes.
+    // Canonical free cells: sorted to ignore equivalent permutations.
     let mut sorted_cells: Vec<u64> = free_cells.iter().map(|c| encode_opt_card(*c)).collect();
     sorted_cells.sort_unstable();
-    h ^= 0xFD; // separador
+    h ^= 0xFD; // separator
     h = h.wrapping_mul(FNV_PRIME);
     for val in sorted_cells {
         h ^= val;
         h = h.wrapping_mul(FNV_PRIME);
     }
 
-    // Tableau canonico: se hashea cada columna por separado y luego se ordena.
+    // Canonical tableau: hash each column separately, then sort.
     let mut col_hashes: Vec<u64> = tableau
         .iter()
         .map(|col| {
@@ -545,7 +544,7 @@ fn compute_signature(
         .collect();
     col_hashes.sort_unstable();
 
-    h ^= 0xFE; // separador
+    h ^= 0xFE; // separator
     h = h.wrapping_mul(FNV_PRIME);
     for ch in col_hashes {
         h ^= ch;
@@ -557,14 +556,14 @@ fn compute_signature(
 
 #[inline]
 fn encode_card(card: Card) -> u64 {
-    // Empaqueta valor y palo en un entero compacto para hashing/firma.
+    // Packs value and suit into a compact integer for hashing/signature.
     let suit_val: u64 = card.suit as u64;
     ((card.value as u64) << 4) | suit_val
 }
 
 #[inline]
 fn encode_opt_card(card: Option<Card>) -> u64 {
-    // Usa 0xFF como centinela para representar slot vacio.
+    // Uses 0xFF as a sentinel to represent an empty slot.
     match card {
         Some(c) => encode_card(c),
         None => 0xFF,

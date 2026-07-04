@@ -1,86 +1,86 @@
-//! Pesos y umbrales del solver de FreeCell.
-//! Centraliza constantes de heurística, progreso, prioridad local y límites de búsqueda.
+//! FreeCell solver weights and thresholds.
+//! Centralizes heuristic, progress, local-priority, and search-limit constants.
 
-// ── Límites de búsqueda ────────────────────────
+// ── Search limits ────────────────────────
 
-/// Máximo de nodos expandidos antes de detener la búsqueda A*.
-pub const MAX_NODES: usize = 1_000_000; // sobre 3_000_000 se obtiene el alto teórico de 98-99%, sin embargo, se compromete velocidad por calidad.
+/// Maximum expanded nodes before stopping A* search.
+pub const MAX_NODES: usize = 1_000_000; // Above 3_000_000 reaches the theoretical 98-99% high, but trades speed for quality.
 
-/// Profundidad máxima de búsqueda (hardcodeado).
+/// Maximum search depth (hardcoded).
 pub const MAX_DEPTH: usize = 200;
 
 // ── One-step Lookahead ───────────────────────────
 
-/// Peso por jugadas inmediatas a fundación.
+/// Weight for immediate foundation moves.
 pub const LOOKAHEAD_FOUNDATION_OPTIONS_WEIGHT: i64 = 90;
-/// Peso por columnas vacías.
+/// Weight for empty columns.
 pub const LOOKAHEAD_EMPTY_COLUMNS_WEIGHT: i64 = 25;
-/// Penalización por free cells ocupadas.
+/// Penalty for occupied free cells.
 pub const LOOKAHEAD_FREE_USED_PENALTY: i64 = 12;
-/// Penalización por low cards bloqueadas.
+/// Penalty for blocked low cards.
 pub const LOOKAHEAD_LOW_BLOCKED_PENALTY: i64 = 8;
 
-// ── Prioridad Local ──────────────────────────────
+// ── Local Priority ──────────────────────────────
 
-/// Prioridad base para movimientos hacia foundation.
+/// Base priority for moves to foundation.
 pub const PRIORITY_BASE_TO_FOUNDATION: i64 = 900;
-/// Prioridad base para mover desde free cell hacia tableau.
+/// Base priority for moving from free cell to tableau.
 pub const PRIORITY_BASE_FREE_TO_TABLEAU: i64 = 260;
-/// Prioridad base para movimientos entre columnas de tableau.
+/// Base priority for moves between tableau columns.
 pub const PRIORITY_BASE_TABLEAU_TO_TABLEAU: i64 = 220;
-/// Prioridad base para mover de tableau a free cell.
+/// Base priority for moving from tableau to free cell.
 pub const PRIORITY_BASE_TABLEAU_TO_FREE: i64 = -60;
-/// Prioridad base para movimientos de retroceso desde foundation.
+/// Base priority for rollback moves from foundation.
 pub const PRIORITY_BASE_FROM_FOUNDATION: i64 = -250;
-/// Prioridad base para movimiento de reparto (no se usa en juego normal).
+/// Base priority for deal moves (not used in normal play).
 pub const PRIORITY_BASE_DEAL: i64 = -1000;
 
-/// Peso del cambio neto de cartas en foundation.
+/// Weight for net foundation card change.
 pub const PRIORITY_FOUNDATION_GAIN_WEIGHT: i64 = 1200;
-/// Peso del cambio en opciones inmediatas de foundation.
+/// Weight for change in immediate foundation options.
 pub const PRIORITY_OPTIONS_GAIN_WEIGHT: i64 = 180;
-/// Peso de la ganancia de columnas vacías.
+/// Weight for gaining empty columns.
 pub const PRIORITY_EMPTY_COL_GAIN_WEIGHT: i64 = 220;
-/// Peso por liberar free cells ocupadas.
+/// Weight for freeing occupied free cells.
 pub const PRIORITY_FREE_FREED_WEIGHT: i64 = 100;
-/// Peso de la mejora en longitud de la corrida máxima.
+/// Weight for improving maximum run length.
 pub const PRIORITY_RUN_GAIN_WEIGHT: i64 = 20;
-/// Peso por desbloquear cartas bajas (A,2,3).
+/// Weight for unblocking low cards (A,2,3).
 pub const PRIORITY_LOW_UNBLOCK_WEIGHT: i64 = 160;
 
 // ── Heuristic Cost ───────────────────────────────
 
-/// Peso por cartas faltantes en foundation (52 - foundation_count).
+/// Weight for cards missing from foundation (52 - foundation_count).
 pub const HEURISTIC_FOUNDATION_REMAINING_WEIGHT: i64 = 120;
-/// Penalización por free cells ocupadas.
+/// Penalty for occupied free cells.
 pub const HEURISTIC_FREE_USED_PENALTY: i64 = 14;
-/// Penalización por cartas bajas bloqueadas.
+/// Penalty for blocked low cards.
 pub const HEURISTIC_LOW_BLOCKED_PENALTY: i64 = 18;
-/// Penalización por desbalance entre foundations de palos.
+/// Penalty for imbalance between suit foundations.
 pub const HEURISTIC_FOUNDATION_IMBALANCE_PENALTY: i64 = 12;
-/// Bonificación por columnas vacías en tableau.
+/// Bonus for empty tableau columns.
 pub const HEURISTIC_EMPTY_TABLEAU_BONUS: i64 = 10;
-/// Bonificación por corrida larga ya formada en tableau.
+/// Bonus for an already formed long run in tableau.
 pub const HEURISTIC_LONGEST_RUN_BONUS: i64 = 3;
-/// Bonificación por jugadas inmediatas disponibles hacia foundation.
+/// Bonus for immediately available moves to foundation.
 pub const HEURISTIC_IMMEDIATE_FOUNDATION_BONUS: i64 = 30;
 
 // ── Progress Score ───────────────────────────────
 
-/// Recompensa principal por avance irreversible en foundation.
+/// Main reward for irreversible foundation progress.
 pub const PROGRESS_FOUNDATION_WEIGHT: i64 = 2500;
-/// Recompensa por opciones inmediatas de foundation.
+/// Reward for immediate foundation options.
 pub const PROGRESS_IMMEDIATE_FOUNDATION_WEIGHT: i64 = 120;
-/// Bonificación por movilidad aportada por columnas vacías.
+/// Mobility bonus from empty columns.
 pub const PROGRESS_EMPTY_TABLEAU_BONUS: i64 = 90;
-/// Bonificación por estructura de corridas largas en tableau.
+/// Bonus for long-run structure in tableau.
 pub const PROGRESS_LONGEST_RUN_BONUS: i64 = 25;
-/// Penalización por saturación de free cells.
+/// Penalty for free-cell saturation.
 pub const PROGRESS_FREE_USED_PENALTY: i64 = 35;
-/// Penalización por bloquear cartas bajas clave.
+/// Penalty for blocking key low cards.
 pub const PROGRESS_LOW_BLOCKED_PENALTY: i64 = 22;
 
-// ── Endgame / expansión ──────────────────────────
+// ── Endgame / expansion ──────────────────────────
 
-/// Desde este conteo de fundación, se permiten jugadas no seguras a fundación.
+/// From this foundation count onward, unsafe foundation moves are allowed.
 pub const ENDGAME_UNSAFE_FOUNDATION_THRESHOLD: usize = 40;

@@ -5,7 +5,7 @@ use super::board::{FreeCellBoard, FreeCellMove};
 use super::weights;
 use crate::common::card::{Card, Suit};
 
-/// Rasgos del tablero cacheados para evaluar heurística y progreso.
+/// Cached board features for heuristic and progress evaluation.
 #[derive(Debug, Clone)]
 struct BoardFeatures {
     foundation_count: usize,
@@ -16,7 +16,7 @@ struct BoardFeatures {
     empty_tableau: usize,
     longest_run: usize,
 }
-// Extrae rasgos relevantes del tablero para evaluación heurística, progreso y prioridad local.
+// Extracts relevant board features for heuristic evaluation, progress, and local priority.
 fn compute_features(board: &FreeCellBoard) -> BoardFeatures {
     let foundation_count = board.total_foundation_count();
     let immediate = immediate_foundation_count(board);
@@ -39,7 +39,7 @@ fn compute_features(board: &FreeCellBoard) -> BoardFeatures {
         longest_run: longest,
     }
 }
-// Cuenta jugadas inmediatas a foundation disponibles en el estado actual del tablero.
+// Counts immediate foundation moves available in the current board state.
 fn immediate_foundation_count(board: &FreeCellBoard) -> usize {
     let mut count = 0;
     for i in 0..8 {
@@ -58,7 +58,7 @@ fn immediate_foundation_count(board: &FreeCellBoard) -> usize {
     }
     count
 }
-// Calcula una penalización por cartas bajas (A,2,3) bloqueadas bajo otras cartas en el tableau.
+// Computes a penalty for low cards (A,2,3) blocked under other cards in the tableau.
 fn blocked_low_penalty(board: &FreeCellBoard) -> i64 {
     let mut penalty: i64 = 0;
     for column in &board.tableau {
@@ -76,13 +76,13 @@ fn blocked_low_penalty(board: &FreeCellBoard) -> i64 {
     }
     penalty
 }
-// Calcula un índice de desbalance entre las foundations de los cuatro palos (diferencia entre la más avanzada y la menos avanzada).
+// Computes a foundation imbalance index across the four suits (most advanced minus least advanced).
 fn foundation_imbalance(board: &FreeCellBoard) -> i64 {
     let min_h = (0..4).map(|i| board.foundation[i].len()).min().unwrap_or(0);
     let max_h = (0..4).map(|i| board.foundation[i].len()).max().unwrap_or(0);
     (max_h - min_h) as i64
 }
-// Calcula la longitud de la corrida más larga ya formada en el tableau (secuencia descendente de mismo palo).
+// Computes the longest run already formed in the tableau (descending same-suit sequence).
 fn longest_run_length(board: &FreeCellBoard) -> usize {
     (0..8)
         .map(|i| board.max_tableau_run_length(i))
@@ -90,7 +90,7 @@ fn longest_run_length(board: &FreeCellBoard) -> usize {
         .unwrap_or(0)
 }
 
-/// Determina si mover a foundation es "seguro" (auto-play sin riesgo táctico).
+/// Determines whether moving to foundation is "safe" (auto-play with no tactical risk).
 fn is_safe_foundation_move(m: &FreeCellMove, board: &FreeCellBoard) -> bool {
     let card = match m {
         FreeCellMove::TableauToFoundation { card, .. } => *card,
@@ -118,7 +118,7 @@ fn is_safe_foundation_move(m: &FreeCellMove, board: &FreeCellBoard) -> bool {
     min_opposite >= (rank as usize).saturating_sub(1)
         && same_color_other >= (rank as usize).saturating_sub(2)
 }
-// Determina si un movimiento de retroceso desde foundation debería ser podado por ser contraproducente.
+// Determines whether a rollback move from foundation should be pruned as counterproductive.
 fn should_prune_rollback(
     m: &FreeCellMove,
     before_f: &BoardFeatures,
@@ -138,7 +138,7 @@ fn should_prune_rollback(
     }
     true
 }
-// Calcula una prioridad local para ordenar movimientos candidatos, combinando cambios netos en rasgos del tablero y un lookahead táctico.
+// Computes local priority for candidate move ordering, combining net feature changes and tactical lookahead.
 fn local_priority(m: &FreeCellMove, before_f: &BoardFeatures, after: &FreeCellBoard) -> i64 {
     let after_immediate = immediate_foundation_count(after) as i64;
     let after_empty_col = after.empty_tableau_columns() as i64;
@@ -153,7 +153,7 @@ fn local_priority(m: &FreeCellMove, before_f: &BoardFeatures, after: &FreeCellBo
     let run_gain = after_longest - before_f.longest_run as i64;
     let low_unblock = before_f.blocked_low_cards - after_blocked;
 
-    // Tactical lookahead (usa valores ya computados del tablero after).
+    // Tactical lookahead (uses values already computed from the after board).
     let tactical = after_immediate * weights::LOOKAHEAD_FOUNDATION_OPTIONS_WEIGHT
         + after_empty_col * weights::LOOKAHEAD_EMPTY_COLUMNS_WEIGHT
         - after_free_used as i64 * weights::LOOKAHEAD_FREE_USED_PENALTY
@@ -179,8 +179,8 @@ fn local_priority(m: &FreeCellMove, before_f: &BoardFeatures, after: &FreeCellBo
         + tactical
 }
 
-/// Cadena de auto-play seguro a foundation:
-/// tras cada jugada, aplica en cascada todas las jugadas seguras disponibles.
+/// Safe auto-play chain to foundation:
+/// after each move, cascades all available safe moves.
 fn auto_play_safe_chain(board: &FreeCellBoard) -> Option<(FreeCellBoard, Vec<FreeCellMove>)> {
     let first = first_safe_foundation_move(board)?;
     let mut current = match first.apply(board) {
@@ -209,7 +209,7 @@ fn auto_play_safe_chain(board: &FreeCellBoard) -> Option<(FreeCellBoard, Vec<Fre
     }
     Some((current, moves))
 }
-// Busca la primera jugada a foundation que sea segura (auto-play sin riesgo táctico) y retorna esa jugada, o None si no hay ninguna.
+// Finds the first safe foundation move (auto-play with no tactical risk), or None if none exists.
 fn first_safe_foundation_move(board: &FreeCellBoard) -> Option<FreeCellMove> {
     for m in FreeCellMove::find_tableau_to_foundation(board) {
         if is_safe_foundation_move(&m, board) {
@@ -223,11 +223,11 @@ fn first_safe_foundation_move(board: &FreeCellBoard) -> Option<FreeCellMove> {
     }
     None
 }
-// Verifica si el tablero representa una posición ganadora (todas las cartas en foundation).
+// Checks whether the board is a winning position (all cards in foundation).
 pub fn is_win(board: &FreeCellBoard) -> bool {
     Suit::ALL.iter().all(|&s| board.foundation_count(s) == 13)
 }
-// Genera una cadena de texto con los rasgos del tablero relevantes para evaluación de progreso, útil para debugging y análisis.
+// Generates a string with board features relevant to progress evaluation, useful for debugging and analysis.
 pub fn progress_token(board: &FreeCellBoard) -> String {
     let f = compute_features(board);
     format!(
@@ -242,7 +242,7 @@ pub fn progress_token(board: &FreeCellBoard) -> String {
     )
 }
 
-/// Solver A* puro de FreeCell con límite de nodos, timeout y retorno parcial.
+/// Pure FreeCell A* solver with node limit, timeout, and partial return.
 pub struct FreeCellSolver {
     _private: (),
 }
@@ -267,7 +267,7 @@ impl FreeCellSolver {
             .moves
     }
 
-    /// Ejecuta A* con límite de nodos, timeout y retorno parcial opcional.
+    /// Runs A* with node limit, timeout, and optional partial return.
     pub fn solve_with_stats(
         &self,
         board: &FreeCellBoard,
@@ -288,7 +288,7 @@ impl FreeCellSolver {
             None
         };
 
-        // Arena de nodos para reconstrucción de camino por índices.
+        // Node arena for path reconstruction by index.
         let mut nodes: Vec<FcSearchNode> = vec![FcSearchNode {
             parent_index: None,
             move_sequence: None,
@@ -306,16 +306,16 @@ impl FreeCellSolver {
             h_score: root_h,
         });
 
-        // Mejor costo g conocido por firma de tablero (tabla de dominancia).
+        // Best known g-cost by board signature (dominance table).
         let mut best_cost: HashMap<u64, usize> = HashMap::new();
         best_cost.insert(board.signature, 0);
 
-        // Seguimiento del mejor progreso para retorno parcial.
+        // Best-progress tracking for partial return.
         let mut best_progress_idx: usize = 0;
         let mut best_progress = progress_score(&root_features);
         let mut expanded: usize = 0;
 
-        // Búsqueda A* pura: expande hasta solución, timeout, límite de nodos o frontera agotada.
+        // Pure A* search: expands until solution, timeout, node limit, or exhausted frontier.
         while let Some(current) = frontier.pop() {
             if let Some(t) = timeout {
                 if start.elapsed() > t {
@@ -332,14 +332,14 @@ impl FreeCellSolver {
             let node_depth = node.depth;
             let current_board = current.board;
 
-            // Poda por dominancia: ignora rutas con costo peor al mejor conocido.
+            // Dominance pruning: ignores paths with worse cost than the best known.
             if let Some(&known) = best_cost.get(&current_board.signature) {
                 if known != node_cost {
                     continue;
                 }
             }
 
-            // Solución completa.
+            // Complete solution.
             if is_win(&current_board) {
                 return FreeCellSolveStats {
                     moves: Some(reconstruct_moves(current.node_index, &nodes)),
@@ -347,12 +347,12 @@ impl FreeCellSolver {
                 };
             }
 
-            // Respeta límite de profundidad.
+            // Respect depth limit.
             if node_depth >= weights::MAX_DEPTH {
                 continue;
             }
 
-            // Genera y expande sucesores del nodo actual.
+            // Generate and expand successors of the current node.
             let candidates = find_all_moves(&current_board);
             let expansions = expand_moves(node_cost, candidates);
 
@@ -362,7 +362,7 @@ impl FreeCellSolver {
                     continue;
                 }
                 let next_g = expansion.path_cost;
-                // Poda por costo si ya existe una mejor ruta al mismo estado.
+                // Cost pruning if a better route to the same state already exists.
                 if let Some(&known) = best_cost.get(&expansion.board.signature) {
                     if known <= next_g {
                         continue;
@@ -378,7 +378,7 @@ impl FreeCellSolver {
                 });
                 best_cost.insert(expansion.board.signature, next_g);
 
-                // Actualiza mejor progreso parcial.
+                // Update best partial progress.
                 let features = compute_features(&expansion.board);
                 let score = progress_score(&features);
                 if score > best_progress {
@@ -396,7 +396,7 @@ impl FreeCellSolver {
             }
         }
 
-        // Sin solución: retorna mejor progreso parcial si se solicitó.
+        // No solution: return best partial progress if requested.
         if allow_partial && best_progress_idx != 0 {
             return FreeCellSolveStats {
                 moves: Some(reconstruct_moves(best_progress_idx, &nodes)),
@@ -449,7 +449,7 @@ fn find_all_moves(board: &FreeCellBoard) -> Vec<(FreeCellMove, FreeCellBoard)> {
         }
     }
 
-    // Final de partida: permite movimientos a foundation no seguros si ya hay suficiente avance.
+    // Endgame: allow unsafe foundation moves if enough progress has already been made.
     if before_f.foundation_count >= weights::ENDGAME_UNSAFE_FOUNDATION_THRESHOLD {
         for m in tab_to_found.iter().chain(fc_to_found.iter()) {
             if is_safe_foundation_move(m, board) {
@@ -479,7 +479,7 @@ fn expand_moves(
             let mut move_seq: Vec<FreeCellMove> = vec![m];
             let mut final_board = move_board;
 
-            // Tras cada jugada, intenta encadenar auto-play seguro a foundation.
+            // After each move, try chaining safe auto-play to foundation.
             if let Some((chain_board, chain_moves)) = auto_play_safe_chain(&final_board) {
                 move_seq.extend(chain_moves);
                 final_board = chain_board;
@@ -529,7 +529,7 @@ fn reconstruct_moves(from: usize, nodes: &[FcSearchNode]) -> Vec<FreeCellMove> {
     moves
 }
 
-// Nodo de la arena de búsqueda para reconstrucción de caminos.
+// Search arena node for path reconstruction.
 struct FcSearchNode {
     parent_index: Option<usize>,
     move_sequence: Option<Vec<FreeCellMove>>,
@@ -537,14 +537,14 @@ struct FcSearchNode {
     path_cost: usize,
 }
 
-// Resultado de expandir una jugada candidata.
+// Result of expanding a candidate move.
 struct FcExpansion {
     board: FreeCellBoard,
     move_sequence: Vec<FreeCellMove>,
     path_cost: usize,
 }
 
-// Elemento almacenado en la frontera A*.
+// Item stored in the A* frontier.
 struct FcFrontierItem {
     node_index: usize,
     board: FreeCellBoard,
@@ -558,7 +558,7 @@ impl FcFrontierItem {
     }
 }
 
-// Heap mínimo para priorizar la frontera A*.
+// Min-heap for prioritizing the A* frontier.
 struct MinHeap {
     storage: Vec<FcFrontierItem>,
 }
