@@ -6,23 +6,23 @@ use super::engine::SpiderEngine;
 use super::moves::SpiderMove;
 use super::weights;
 
-/// Solver DFS Chunked con Checkpoints y Multi-Attempt para Spider Solitaire.
+/// Chunked DFS solver with checkpoints and multi-attempt search for Spider Solitaire.
 ///
-/// Cada "chunk" es un DFS a profundidad fija que busca la mejor mejora
-/// incremental. Los chunks se encadenan mediante checkpoints adoptados.
-/// Multi-attempt con perturbación determinista del ordenamiento de movimientos
-/// proporciona diversidad entre intentos.
+/// Each "chunk" is a fixed-depth DFS that searches for the best incremental
+/// improvement. Chunks are chained through adopted checkpoints.
+/// Multi-attempt deterministic move-order perturbation provides diversity
+/// between attempts.
 pub struct SpiderSolver {
     engine: SpiderEngine,
 }
 
-/// Estadísticas del proceso de resolución.
+/// Statistics for the solving process.
 pub struct SpiderSolveStats {
     pub moves: Option<Vec<SpiderMove>>,
     pub checkpoints_adopted: u32,
 }
 
-/// Resultado de un chunk individual de DFS.
+/// Result of an individual DFS chunk.
 enum ChunkResult {
     Solution(Vec<SpiderMove>),
     BestProgress {
@@ -32,7 +32,7 @@ enum ChunkResult {
     Exhausted,
 }
 
-/// Contexto mutable del DFS recursivo.
+/// Mutable context for recursive DFS.
 struct DfsContext {
     nodes: u64,
     node_limit: u64,
@@ -42,7 +42,7 @@ struct DfsContext {
     solution: Option<Vec<SpiderMove>>,
 }
 
-// ── Solver Multi-Attempt con DFS Chunked ────────────────────────────
+// ── Multi-Attempt Solver with Chunked DFS ────────────────────────────
 
 impl SpiderSolver {
     pub fn new(suit_count: u32) -> SpiderSolver {
@@ -51,7 +51,7 @@ impl SpiderSolver {
         }
     }
 
-    /// Acceso rápido al suit_count del engine.
+    /// Fast access to the engine suit_count.
     fn suit_count(&self) -> u32 {
         self.engine.suit_count
     }
@@ -60,9 +60,9 @@ impl SpiderSolver {
         self.solve_with_stats(board, allow_partial).moves
     }
 
-    /// Punto de entrada principal: ejecuta múltiples intentos con perturbación
-    /// determinista del ordenamiento de movimientos.
-    /// Solver determinista: mismos inputs → mismos outputs, siempre.
+    /// Main entry point: runs multiple attempts with deterministic move-order
+    /// perturbation.
+    /// Deterministic solver: same inputs -> same outputs, always.
     pub fn solve_with_stats(&self, board: &SpiderBoard, allow_partial: bool) -> SpiderSolveStats {
         if SpiderEngine::is_win(board) {
             return SpiderSolveStats {
@@ -118,7 +118,7 @@ impl SpiderSolver {
         }
     }
 
-    /// Un intento individual con perturbación específica.
+    /// An individual attempt with a specific perturbation.
     fn solve_attempt(&self, board: &SpiderBoard, attempt: u64) -> SpiderSolveStats {
         let sc = self.suit_count();
         let mut unified_path: Vec<SpiderMove> = Vec::new();
@@ -133,7 +133,7 @@ impl SpiderSolver {
         let mut tt: HashMap<u64, usize> = HashMap::new();
 
         for _chunk in 0..weights::max_checkpoints(sc) {
-            // Deal-eager: repartir proactivamente cada N checkpoints.
+            // Deal-eager: proactively deal every N checkpoints.
             if deal_eager
                 && checkpoints_since_deal >= weights::deal_eager_frequency(sc)
                 && current_board.can_deal_from_stock()
@@ -189,7 +189,7 @@ impl SpiderSolver {
 
             stall_count += 1;
 
-            // Fallback: intentar repartir del stock.
+            // Fallback: try dealing from stock.
             if let Some(new_board) = SpiderMove::DealFromStock.apply(&current_board) {
                 if !adopted_sigs.contains(&new_board.signature) {
                     adopted_sigs.insert(new_board.signature);
@@ -220,7 +220,7 @@ impl SpiderSolver {
         }
     }
 
-    /// Chunk DFS: un solo DFS a profundidad fija. Simple y rápido.
+    /// DFS chunk: a single fixed-depth DFS. Simple and fast.
     fn dfs_chunk(
         &self,
         board: &SpiderBoard,
@@ -272,7 +272,7 @@ impl SpiderSolver {
         }
     }
 
-    /// DFS recursivo con detección de ciclos, TT y tracking de progreso.
+    /// Recursive DFS with cycle detection, TT, and progress tracking.
     fn dfs(
         &self,
         board: &SpiderBoard,
@@ -315,11 +315,11 @@ impl SpiderSolver {
         tt.insert(sig, depth);
 
         if tt.len() >= weights::tt_max_entries(self.suit_count()) {
-            // Eviction parcial: conservar entradas con depth bajo (más poder de poda).
-            // Una entrada depth=2 poda visitas a depth>=2; una depth=12 solo poda depth>=12.
+            // Partial eviction: keep entries with low depth (more pruning power).
+            // A depth=2 entry prunes visits at depth>=2; depth=12 only prunes depth>=12.
             let cutoff = weights::DFS_MAX_DEPTH / 2;
             tt.retain(|_, depth| *depth <= cutoff);
-            // Fallback de seguridad: si retain no liberó suficiente, limpiar todo.
+            // Safety fallback: if retain did not free enough, clear everything.
             if tt.len() >= weights::tt_max_entries(self.suit_count()) {
                 tt.clear();
             }
@@ -439,7 +439,7 @@ fn progress_score(board: &SpiderBoard, suit_count: u32) -> i64 {
         }
     }
 
-    // Nueva señal: penalización por fragmentación de palos en face_up.
+    // New signal: suit fragmentation penalty in face_up cards.
     let frag_penalty: i64 = columns
         .iter()
         .map(|c| c.suit_transitions() as i64)
