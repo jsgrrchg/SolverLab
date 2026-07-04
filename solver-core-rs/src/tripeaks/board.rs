@@ -1,22 +1,22 @@
 use crate::common::card::Card;
 
-/// Tablero TriPeaks: 28 posiciones de tableau (3 picos, 4 filas), stock y waste.
+/// TriPeaks board: 28 tableau positions (3 peaks, 4 rows), stock, and waste.
 #[derive(Debug, Clone)]
 pub struct TriPeaksBoard {
-    /// 28 posiciones. Some = carta presente, None = removida.
+    /// 28 positions. Some = card present, None = removed.
     pub tableau: Vec<Option<Card>>,
-    /// Pila de stock. Las cartas se roban desde stock.last() hacia waste.
+    /// Stock pile. Cards are drawn from stock.last() to waste.
     pub stock: Vec<Card>,
-    /// Pila de waste. Tope = waste.last(); se usa como referencia de adyacencia.
+    /// Waste pile. Top = waste.last(); used as adjacency reference.
     pub waste: Vec<Card>,
-    /// Firma hash del estado, usada para deduplicación en búsqueda.
+    /// State hash signature, used for search deduplication.
     pub signature: u64,
 }
 
 impl TriPeaksBoard {
     pub const TABLEAU_SIZE: usize = 28;
 
-    /// Crea un tablero TriPeaks y recalcula su firma.
+    /// Creates a TriPeaks board and recomputes its signature.
     pub fn new(tableau: Vec<Option<Card>>, stock: Vec<Card>, waste: Vec<Card>) -> TriPeaksBoard {
         assert_eq!(tableau.len(), Self::TABLEAU_SIZE);
         let signature = compute_signature(&tableau, &stock, &waste);
@@ -28,12 +28,12 @@ impl TriPeaksBoard {
         }
     }
 
-    /// Índices de inicio y cantidad por fila para el layout de 3 picos.
-    /// Fila 0: 3 cartas (picos), fila 1: 6, fila 2: 9, fila 3: 10.
+    /// Start indices and counts per row for the 3-peak layout.
+    /// Row 0: 3 cards (peaks), row 1: 6, row 2: 9, row 3: 10.
     const ROW_START: [usize; 4] = [0, 3, 9, 18];
     const ROW_COUNT: [usize; 4] = [3, 6, 9, 10];
 
-    /// Devuelve la fila (0-3) del índice dado.
+    /// Returns the row (0-3) for the given index.
     pub fn row(index: usize) -> usize {
         assert!(index < Self::TABLEAU_SIZE);
         for r in 0..4 {
@@ -44,8 +44,8 @@ impl TriPeaksBoard {
         3
     }
 
-    /// Devuelve los índices padre de una posición (cartas que la cubren desde la fila superior).
-    /// Debe coincidir exactamente con el mapping hardcodeado de `parents()` en Swift.
+    /// Returns parent indices for a position (cards that cover it from the row above).
+    /// Must exactly match the hardcoded `parents()` mapping in Swift.
     pub fn parents(index: usize) -> Vec<usize> {
         assert!(index < Self::TABLEAU_SIZE);
         let r = Self::row(index);
@@ -95,8 +95,8 @@ impl TriPeaksBoard {
         }
     }
 
-    /// Devuelve los índices de las cartas que cubren esta posición (fila inferior).
-    /// Una carta está expuesta cuando todos sus children han sido removidos.
+    /// Returns indices of cards that cover this position (lower row).
+    /// A card is exposed when all its children have been removed.
     pub fn children(index: usize) -> Vec<usize> {
         assert!(index < Self::TABLEAU_SIZE);
         let r = Self::row(index);
@@ -139,7 +139,7 @@ impl TriPeaksBoard {
         }
     }
 
-    /// Verdadero si la posición tiene carta y todas las cartas que la cubren (fila inferior) fueron removidas.
+    /// True if the position has a card and all cards covering it (lower row) were removed.
     pub fn is_exposed(&self, index: usize) -> bool {
         if index >= self.tableau.len() || self.tableau[index].is_none() {
             return false;
@@ -148,30 +148,30 @@ impl TriPeaksBoard {
         kids.iter().all(|&c| self.tableau[c].is_none())
     }
 
-    /// Lista de índices de tableau actualmente expuestos.
+    /// List of currently exposed tableau indices.
     pub fn exposed_tableau_indices(&self) -> Vec<usize> {
         (0..self.tableau.len())
             .filter(|&i| self.is_exposed(i))
             .collect()
     }
 
-    /// Devuelve la carta del tope de waste, si existe.
+    /// Returns the top waste card, if any.
     pub fn waste_top(&self) -> Option<Card> {
         self.waste.last().copied()
     }
 
-    /// Indica si se puede robar carta desde stock.
+    /// Indicates whether a card can be drawn from stock.
     pub fn can_draw_from_stock(&self) -> bool {
         !self.stock.is_empty()
     }
 
-    /// Cuenta cuántas cartas quedan en el tableau.
+    /// Counts how many cards remain in the tableau.
     pub fn remaining_tableau(&self) -> usize {
         self.tableau.iter().filter(|c| c.is_some()).count()
     }
 }
 
-/// Verifica adyacencia: valores que difieren en 1, con wrap Rey↔As.
+/// Checks adjacency: values differ by 1, with King-Ace wrap.
 pub fn is_adjacent(card: Card, waste_top: Card) -> bool {
     let a = card.value as i32;
     let b = waste_top.value as i32;
@@ -184,24 +184,24 @@ pub fn is_adjacent(card: Card, waste_top: Card) -> bool {
     false
 }
 
-/// Movimientos de TriPeaks.
+/// TriPeaks moves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TriPeaksMove {
-    /// Reparte el mazo inicial.
+    /// Deals the initial deck.
     Deal { deck: Vec<Card> },
-    /// Mueve una carta expuesta del tableau al waste.
+    /// Moves an exposed tableau card to waste.
     TableauToWaste { tableau_index: usize },
-    /// Roba una carta desde stock al waste.
+    /// Draws a card from stock to waste.
     DrawFromStock,
 }
 
 impl TriPeaksMove {
-    /// Verdadero si el movimiento remueve carta del tableau.
+    /// True if the move removes a tableau card.
     pub fn is_tableau_move(&self) -> bool {
         matches!(self, TriPeaksMove::TableauToWaste { .. })
     }
 
-    /// Aplica un movimiento sobre un tablero y devuelve el nuevo estado si es válido.
+    /// Applies a move to a board and returns the new state if valid.
     pub fn apply(&self, board: &TriPeaksBoard) -> Option<TriPeaksBoard> {
         match self {
             TriPeaksMove::Deal { deck } => apply_deal(deck),
@@ -249,7 +249,7 @@ impl TriPeaksMove {
     }
 }
 
-/// Aplica la lógica de reparto inicial para TriPeaks.
+/// Applies the initial deal logic for TriPeaks.
 fn apply_deal(deck: &[Card]) -> Option<TriPeaksBoard> {
     if deck.len() != 52 {
         return None;
@@ -267,10 +267,10 @@ fn apply_deal(deck: &[Card]) -> Option<TriPeaksBoard> {
     Some(TriPeaksBoard::new(tableau, stock, waste))
 }
 
-// -- Generación de movimientos --
+// -- Move generation --
 
 impl TriPeaksMove {
-    /// Genera movimientos válidos desde cartas expuestas del tableau al waste.
+    /// Generates valid moves from exposed tableau cards to waste.
     pub fn find_tableau_to_waste_moves(board: &TriPeaksBoard) -> Vec<TriPeaksMove> {
         let waste_top = match board.waste_top() {
             Some(c) => c,
@@ -287,7 +287,7 @@ impl TriPeaksMove {
         moves
     }
 
-    /// Solo permite robar de stock cuando no hay movimientos de tableau disponibles.
+    /// Only allows drawing from stock when no tableau moves are available.
     pub fn find_draw_from_stock_moves(board: &TriPeaksBoard) -> Vec<TriPeaksMove> {
         if !board.can_draw_from_stock() {
             return vec![];
@@ -300,7 +300,7 @@ impl TriPeaksMove {
     }
 }
 
-// Igualdad personalizada que ignora `signature`.
+// Custom equality that ignores `signature`.
 impl PartialEq for TriPeaksBoard {
     fn eq(&self, other: &Self) -> bool {
         self.tableau == other.tableau && self.stock == other.stock && self.waste == other.waste
@@ -310,13 +310,13 @@ impl PartialEq for TriPeaksBoard {
 impl Eq for TriPeaksBoard {}
 
 impl std::hash::Hash for TriPeaksBoard {
-    /// Hash basado en la firma precomputada del estado.
+    /// Hash based on the precomputed state signature.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(self.signature);
     }
 }
 
-/// Calcula una firma FNV-1a del estado completo (tableau, stock y waste).
+/// Computes an FNV-1a signature of the full state (tableau, stock, and waste).
 fn compute_signature(tableau: &[Option<Card>], stock: &[Card], waste: &[Card]) -> u64 {
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
@@ -350,14 +350,14 @@ fn compute_signature(tableau: &[Option<Card>], stock: &[Card], waste: &[Card]) -
 }
 
 #[inline]
-/// Codifica una carta en un entero compacto para la firma.
+/// Encodes a card into a compact integer for the signature.
 fn encode_card(card: Card) -> u64 {
     let suit_val: u64 = card.suit as u64;
     ((card.value as u64) << 4) | suit_val
 }
 
 #[inline]
-/// Codifica una carta opcional; usa sentinela para `None`.
+/// Encodes an optional card; uses a sentinel for `None`.
 fn encode_opt_card(card: Option<Card>) -> u64 {
     match card {
         Some(c) => encode_card(c),

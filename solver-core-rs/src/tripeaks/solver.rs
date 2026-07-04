@@ -4,21 +4,21 @@ use std::time::Instant;
 use super::board::{TriPeaksBoard, TriPeaksMove};
 use super::weights;
 
-/// Transición del solver de TriPeaks.
+/// TriPeaks solver transition.
 pub struct TriPeaksTransition {
-    /// Tablero origen.
+    /// Source board.
     pub from_board: TriPeaksBoard,
-    /// Tablero destino tras aplicar el movimiento.
+    /// Destination board after applying the move.
     pub to_board: TriPeaksBoard,
-    /// Movimiento aplicado.
+    /// Applied move.
     pub the_move: TriPeaksMove,
-    /// Movimiento previo del camino, si existe.
+    /// Previous move in the path, if any.
     pub previous_move: Option<TriPeaksMove>,
-    /// Profundidad del nodo de destino.
+    /// Destination node depth.
     pub depth: usize,
 }
 
-/// Reglas de poda para TriPeaks.
+/// Pruning rules for TriPeaks.
 #[derive(Debug, Clone)]
 pub enum TriPeaksRule {
     DepthLimit { max_depth: usize },
@@ -27,7 +27,7 @@ pub enum TriPeaksRule {
 }
 
 impl TriPeaksRule {
-    /// Construye el conjunto de reglas por defecto.
+    /// Builds the default rule set.
     pub fn default_rules(max_depth: usize) -> Vec<TriPeaksRule> {
         vec![
             TriPeaksRule::DepthLimit { max_depth },
@@ -36,7 +36,7 @@ impl TriPeaksRule {
         ]
     }
 
-    /// Indica si una transición debe descartarse.
+    /// Indicates whether a transition should be discarded.
     pub fn should_prune(&self, transition: &TriPeaksTransition) -> bool {
         match self {
             TriPeaksRule::DepthLimit { max_depth } => transition.depth > *max_depth,
@@ -69,33 +69,33 @@ impl TriPeaksRule {
     }
 }
 
-/// Solver A* puro de TriPeaks con timeout y retorno parcial.
+/// Pure TriPeaks A* solver with timeout and partial return.
 pub struct TriPeaksSolver {
     pub rules: Vec<TriPeaksRule>,
 }
 
-/// Resultado extendido de resolución.
+/// Extended solve result.
 pub struct TriPeaksSolveStats {
-    /// Secuencia de movimientos encontrada (completa o parcial).
+    /// Found move sequence (complete or partial).
     pub moves: Option<Vec<TriPeaksMove>>,
-    /// Cantidad de checkpoints adoptados.
+    /// Number of adopted checkpoints.
     pub checkpoints_adopted: u32,
 }
 
 impl TriPeaksSolver {
-    /// Crea el solver con max_depth hardcodeado desde weights.
+    /// Creates the solver with max_depth hardcoded from weights.
     pub fn new() -> TriPeaksSolver {
         TriPeaksSolver {
             rules: TriPeaksRule::default_rules(weights::MAX_DEPTH),
         }
     }
 
-    /// Hay victoria cuando no quedan cartas en tableau.
+    /// Victory occurs when no tableau cards remain.
     pub fn is_win(board: &TriPeaksBoard) -> bool {
         board.tableau.iter().all(|c| c.is_none())
     }
 
-    /// Genera y ordena sucesores válidos desde el estado actual.
+    /// Generates and orders valid successors from the current state.
     fn successors(
         &self,
         board: &TriPeaksBoard,
@@ -130,22 +130,22 @@ impl TriPeaksSolver {
             }
         }
 
-        // Ordena por prioridad local: primero movimientos de tableau.
+        // Order by local priority: tableau moves first.
         transitions.sort_by(|a, b| {
             let pa = local_priority(&a);
             let pb = local_priority(&b);
-            pb.cmp(&pa) // descendente
+            pb.cmp(&pa) // descending
         });
 
         transitions
     }
 
-    /// API simple de resolución, sin estadísticas.
+    /// Simple solve API, without statistics.
     pub fn solve(&self, board: &TriPeaksBoard, allow_partial: bool) -> Option<Vec<TriPeaksMove>> {
         self.solve_with_stats(board, allow_partial).moves
     }
 
-    /// Ejecuta A* con límite de nodos, timeout y retorno parcial opcional.
+    /// Runs A* with node limit, timeout, and optional partial return.
     pub fn solve_with_stats(
         &self,
         board: &TriPeaksBoard,
@@ -161,7 +161,7 @@ impl TriPeaksSolver {
         let start = Instant::now();
         let timeout = Some(std::time::Duration::from_secs_f64(weights::TIMEOUT_SECS));
 
-        // Arena de nodos para reconstrucción de caminos.
+        // Node arena for path reconstruction.
         let mut nodes: Vec<TpSearchNode> = vec![TpSearchNode {
             parent_index: None,
             the_move: None,
@@ -185,7 +185,7 @@ impl TriPeaksSolver {
         let mut best_progress = progress_score(board);
         let mut expanded: usize = 0;
 
-        // Búsqueda A* pura: expande hasta solución, timeout, límite de nodos o frontera agotada.
+        // Pure A* search: expands until solution, timeout, node limit, or exhausted frontier.
         while let Some(current) = frontier.pop() {
             if let Some(t) = timeout {
                 if start.elapsed() > t {
@@ -253,7 +253,7 @@ impl TriPeaksSolver {
             }
         }
 
-        // Sin solución: retorna mejor progreso parcial si se solicitó.
+        // No solution: return best partial progress if requested.
         if allow_partial && best_progress_idx != 0 {
             return TriPeaksSolveStats {
                 moves: Some(reconstruct_moves(best_progress_idx, &nodes)),
@@ -268,7 +268,7 @@ impl TriPeaksSolver {
     }
 }
 
-/// Reparte un mazo en el estado inicial de TriPeaks.
+/// Deals a deck into the initial TriPeaks state.
 pub fn deal(deck: &[crate::common::card::Card]) -> Option<TriPeaksBoard> {
     let deal_move = TriPeaksMove::Deal {
         deck: deck.to_vec(),
@@ -280,7 +280,7 @@ pub fn deal(deck: &[crate::common::card::Card]) -> Option<TriPeaksBoard> {
     ))
 }
 
-/// Token compacto para detectar/medir progreso entre estados.
+/// Compact token for detecting/measuring progress between states.
 pub fn progress_token(board: &TriPeaksBoard) -> String {
     let remaining = board.remaining_tableau();
     let stock = board.stock.len();
@@ -288,7 +288,7 @@ pub fn progress_token(board: &TriPeaksBoard) -> String {
     format!("r:{}|s:{}|w:{}", remaining, stock, waste)
 }
 
-/// Prioridad local usada para ordenar transiciones.
+/// Local priority used to order transitions.
 fn local_priority(transition: &TriPeaksTransition) -> i64 {
     match &transition.the_move {
         TriPeaksMove::TableauToWaste { .. } => {
@@ -301,49 +301,49 @@ fn local_priority(transition: &TriPeaksTransition) -> i64 {
     }
 }
 
-/// Heurística A*: cartas restantes en tableau.
+/// A* heuristic: remaining tableau cards.
 fn heuristic_cost(board: &TriPeaksBoard) -> i64 {
     board.remaining_tableau() as i64 * weights::HEURISTIC_REMAINING_TABLEAU_WEIGHT
 }
 
-/// Puntaje de progreso: cartas removidas del tableau.
+/// Progress score: removed tableau cards.
 fn progress_score(board: &TriPeaksBoard) -> i64 {
     (TriPeaksBoard::TABLEAU_SIZE as i64 - board.remaining_tableau() as i64)
         * weights::PROGRESS_REMOVED_TABLEAU_WEIGHT
 }
 
-/// Nodo almacenado en la arena de búsqueda.
+/// Node stored in the search arena.
 struct TpSearchNode {
-    /// Índice del padre en `nodes`.
+    /// Parent index in `nodes`.
     parent_index: Option<usize>,
-    /// Movimiento usado para llegar a este nodo.
+    /// Move used to reach this node.
     the_move: Option<TriPeaksMove>,
-    /// Profundidad del nodo.
+    /// Node depth.
     depth: usize,
-    /// Costo acumulado g.
+    /// Accumulated g cost.
     path_cost: usize,
 }
 
-/// Entrada de frontera para el heap de prioridad.
+/// Frontier entry for the priority heap.
 struct TpFrontierItem {
-    /// Índice del nodo asociado en `nodes`.
+    /// Associated node index in `nodes`.
     node_index: usize,
-    /// Copia del tablero para expansión.
+    /// Board copy for expansion.
     board: TriPeaksBoard,
-    /// Costo acumulado g.
+    /// Accumulated g cost.
     g_score: usize,
-    /// Heurística h.
+    /// Heuristic h.
     h_score: i64,
 }
 
 impl TpFrontierItem {
-    /// Puntaje total f = g + h.
+    /// Total score f = g + h.
     fn f_score(&self) -> i64 {
         self.g_score as i64 + self.h_score
     }
 }
 
-/// Reconstruye el camino de movimientos desde un nodo hasta la raíz.
+/// Reconstructs the move path from a node back to the root.
 fn reconstruct_moves(from: usize, nodes: &[TpSearchNode]) -> Vec<TriPeaksMove> {
     let mut moves = Vec::new();
     let mut cursor: Option<usize> = Some(from);
@@ -359,27 +359,27 @@ fn reconstruct_moves(from: usize, nodes: &[TpSearchNode]) -> Vec<TriPeaksMove> {
 
 // -- MinHeap --
 
-/// Heap mínimo para priorizar la frontera A*.
+/// Min-heap for prioritizing the A* frontier.
 struct MinHeap {
-    /// Almacenamiento del heap binario.
+    /// Binary heap storage.
     storage: Vec<TpFrontierItem>,
 }
 
 impl MinHeap {
-    /// Crea un heap vacío.
+    /// Creates an empty heap.
     fn new() -> MinHeap {
         MinHeap {
             storage: Vec::new(),
         }
     }
 
-    /// Inserta un elemento y reequilibra hacia arriba.
+    /// Inserts an item and rebalances upward.
     fn push(&mut self, item: TpFrontierItem) {
         self.storage.push(item);
         self.sift_up(self.storage.len() - 1);
     }
 
-    /// Extrae el elemento de mayor prioridad.
+    /// Extracts the highest-priority item.
     fn pop(&mut self) -> Option<TpFrontierItem> {
         if self.storage.is_empty() {
             return None;
@@ -394,7 +394,7 @@ impl MinHeap {
         Some(min)
     }
 
-    /// Comparador de prioridad (menor f/h primero, luego orden estable).
+    /// Priority comparator (lower f/h first, then stable order).
     fn is_higher(a: &TpFrontierItem, b: &TpFrontierItem) -> bool {
         let fa = a.f_score();
         let fb = b.f_score();
@@ -407,7 +407,7 @@ impl MinHeap {
         a.node_index < b.node_index
     }
 
-    /// Reequilibra subiendo desde `child`.
+    /// Rebalances upward from `child`.
     fn sift_up(&mut self, mut child: usize) {
         while child > 0 {
             let parent = (child - 1) / 2;
@@ -420,7 +420,7 @@ impl MinHeap {
         }
     }
 
-    /// Reequilibra bajando desde `parent`.
+    /// Rebalances downward from `parent`.
     fn sift_down(&mut self, mut parent: usize) {
         loop {
             let left = 2 * parent + 1;

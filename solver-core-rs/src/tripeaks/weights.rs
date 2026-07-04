@@ -1,30 +1,30 @@
-//! Pesos y umbrales del solver de TriPeaks.
-//! Centraliza constantes de heurística, progreso, prioridad local y checkpoints.
+//! TriPeaks solver weights and thresholds.
+//! Centralizes heuristic, progress, local-priority, and checkpoint constants.
 
 // ── Solver ──────────────────────────────────────
 
-/// Profundidad máxima de búsqueda
+/// Maximum search depth.
 pub const MAX_DEPTH: usize = 100;
 
-/// Timeout de búsqueda en segundos (corte de seguridad)
+/// Search timeout in seconds (safety cutoff).
 pub const TIMEOUT_SECS: f64 = 5.0;
 
-// ── Prioridad Local ─────────────────────────────
+// ── Local Priority ─────────────────────────────
 
-/// Multiplicador para priorizar transiciones que remueven cartas de tableau.
+/// Multiplier for prioritizing transitions that remove tableau cards.
 pub const LOCAL_PRIORITY_TABLEAU_REMOVAL_WEIGHT: i64 = 10;
 
 // ── Heuristic Cost ──────────────────────────────
 
-/// Peso para cartas restantes en tableau (heurística A*).
+/// Weight for remaining tableau cards (A* heuristic).
 pub const HEURISTIC_REMAINING_TABLEAU_WEIGHT: i64 = 1;
 
 // ── Progress Score ──────────────────────────────
 
-/// Peso para cartas removidas de tableau en el puntaje de progreso.
+/// Weight for removed tableau cards in progress score.
 pub const PROGRESS_REMOVED_TABLEAU_WEIGHT: i64 = 1;
 
-// ── Límites de búsqueda ─────────────────────────
+// ── Search limits ─────────────────────────
 
-/// Máximo de nodos expandidos antes de detener la búsqueda A*.
+/// Maximum expanded nodes before stopping A* search.
 pub const MAX_NODES: usize = 300_000;

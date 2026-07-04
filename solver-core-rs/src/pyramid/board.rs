@@ -1,26 +1,26 @@
 use crate::common::card::Card;
 use std::collections::HashSet;
 
-/// Tablero de Pirámide: 28 posiciones en la pirámide, stock, descarte y fundación.
+/// Pyramid board: 28 pyramid positions, stock, waste, and foundation.
 #[derive(Debug, Clone)]
 pub struct PyramidBoard {
-    /// 28 posiciones. Some = carta presente, None = retirada.
+    /// 28 positions. Some = card present, None = removed.
     pub pyramid: Vec<Option<Card>>,
-    /// Stock boca abajo (tope = último).
+    /// Face-down stock (top = last).
     pub stock: Vec<Card>,
-    /// Descarte boca arriba (tope = último).
+    /// Face-up waste (top = last).
     pub waste: Vec<Card>,
-    /// Cartas retiradas.
+    /// Removed cards.
     pub foundation: Vec<Card>,
-    /// Firma hash precalculada del estado.
+    /// Precomputed state hash signature.
     pub signature: u64,
 }
 
 impl PyramidBoard {
-    /// Cantidad total de posiciones de la pirámide (7 filas = 28 cartas).
+    /// Total number of pyramid positions (7 rows = 28 cards).
     pub const PYRAMID_SIZE: usize = 28;
 
-    /// Crea un tablero de Pirámide y calcula su firma hash inicial.
+    /// Creates a Pyramid board and computes its initial hash signature.
     pub fn new(
         pyramid: Vec<Option<Card>>,
         stock: Vec<Card>,
@@ -38,7 +38,7 @@ impl PyramidBoard {
         }
     }
 
-    /// Fila para el índice dado (0-6).
+    /// Row for the given index (0-6).
     pub fn row(index: usize) -> usize {
         assert!(index < Self::PYRAMID_SIZE);
         let mut row = 0;
@@ -50,7 +50,7 @@ impl PyramidBoard {
         row
     }
 
-    /// Índice del hijo izquierdo, si existe.
+    /// Left child index, if any.
     pub fn left_child(index: usize) -> Option<usize> {
         let row = Self::row(index);
         if row >= 6 {
@@ -60,12 +60,12 @@ impl PyramidBoard {
         Some(((row + 1) * (row + 2)) / 2 + column)
     }
 
-    /// Índice del hijo derecho, si existe.
+    /// Right child index, if any.
     pub fn right_child(index: usize) -> Option<usize> {
         Self::left_child(index).map(|l| l + 1)
     }
 
-    /// Verdadero si la posición tiene carta y ambos hijos están vacíos.
+    /// True if the position has a card and both children are empty.
     pub fn is_exposed(&self, index: usize) -> bool {
         if index >= self.pyramid.len() || self.pyramid[index].is_none() {
             return false;
@@ -82,37 +82,37 @@ impl PyramidBoard {
         }
     }
 
-    /// Devuelve los índices actualmente expuestos de la pirámide.
+    /// Returns the currently exposed pyramid indices.
     pub fn exposed_pyramid_indices(&self) -> Vec<usize> {
         (0..self.pyramid.len())
             .filter(|&i| self.is_exposed(i))
             .collect()
     }
 
-    /// Carta del tope del descarte.
+    /// Top waste card.
     pub fn waste_top(&self) -> Option<Card> {
         self.waste.last().copied()
     }
-    /// Carta del tope del stock.
+    /// Top stock card.
     pub fn stock_top(&self) -> Option<Card> {
         self.stock.last().copied()
     }
-    /// Indica si se puede avanzar del stock al descarte.
+    /// Indicates whether stock can advance to waste.
     pub fn can_advance_stock(&self) -> bool {
         !self.stock.is_empty()
     }
-    /// Indica si se puede reciclar el descarte al stock.
+    /// Indicates whether waste can be recycled to stock.
     pub fn can_reset_stock(&self) -> bool {
         self.stock.is_empty() && !self.waste.is_empty()
     }
 
-    /// Cantidad de cartas restantes en la pirámide.
+    /// Number of remaining cards in the pyramid.
     pub fn remaining_pyramid(&self) -> usize {
         self.pyramid.iter().filter(|c| c.is_some()).count()
     }
 }
 
-/// Movimientos de Pirámide.
+/// Pyramid moves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PyramidMove {
     Deal { deck: Vec<Card> },
@@ -125,22 +125,22 @@ pub enum PyramidMove {
 }
 
 impl PyramidMove {
-    /// Verdadero si el movimiento es reciclar stock.
+    /// True if the move recycles stock.
     pub fn is_stock_reset(&self) -> bool {
         matches!(self, PyramidMove::StockReset)
     }
-    /// Verdadero si el movimiento es avanzar stock.
+    /// True if the move advances stock.
     pub fn is_stock_advance(&self) -> bool {
         matches!(self, PyramidMove::StockAdvance)
     }
-    /// Verdadero si el movimiento retira un rey.
+    /// True if the move removes a King.
     pub fn is_king_move(&self) -> bool {
         matches!(
             self,
             PyramidMove::KingToFoundationPyramid { .. } | PyramidMove::KingToFoundationWaste
         )
     }
-    /// Verdadero si el movimiento retira una pareja que suma 13.
+    /// True if the move removes a pair summing to 13.
     pub fn is_pair_move(&self) -> bool {
         matches!(
             self,
@@ -149,7 +149,7 @@ impl PyramidMove {
         )
     }
 
-    /// Aplica el movimiento a un tablero.
+    /// Applies the move to a board.
     pub fn apply(&self, board: &PyramidBoard) -> Option<PyramidBoard> {
         match self {
             PyramidMove::Deal { deck } => apply_py_deal(deck),
@@ -275,7 +275,7 @@ impl PyramidMove {
 }
 
 fn apply_py_deal(deck: &[Card]) -> Option<PyramidBoard> {
-    // Reparte 28 cartas a la pirámide y deja el resto en el stock.
+    // Deals 28 cards to the pyramid and leaves the rest in stock.
     if deck.len() != 52 {
         return None;
     }
@@ -287,7 +287,7 @@ fn apply_py_deal(deck: &[Card]) -> Option<PyramidBoard> {
     Some(PyramidBoard::new(pyramid, stock, vec![], vec![]))
 }
 
-/// Permite retirar una pareja donde una carta puede estar cubierta por la otra.
+/// Allows removing a pair where one card may be covered by the other.
 fn can_remove_pair(board: &PyramidBoard, first: usize, second: usize) -> bool {
     if board.is_exposed(first) && board.is_exposed(second) {
         return true;
@@ -298,7 +298,7 @@ fn can_remove_pair(board: &PyramidBoard, first: usize, second: usize) -> bool {
     can_use_covered_when_source_removed(board, second, first)
 }
 
-/// Regla especial: puede retirarse una carta cubierta si su única bloqueadora es la carta origen.
+/// Special rule: a covered card can be removed if its only blocker is the source card.
 fn can_use_covered_when_source_removed(board: &PyramidBoard, source: usize, dest: usize) -> bool {
     if !board.is_exposed(source) {
         return false;
@@ -327,10 +327,10 @@ fn can_use_covered_when_source_removed(board: &PyramidBoard, source: usize, dest
     blockers.len() == 1 && blockers[0] == source
 }
 
-// -- Generación de movimientos --
+// -- Move generation --
 
 impl PyramidMove {
-    /// Genera el movimiento de avance de stock si está disponible.
+    /// Generates the stock advance move if available.
     pub fn find_stock_advance_moves(board: &PyramidBoard) -> Vec<PyramidMove> {
         if board.can_advance_stock() {
             vec![PyramidMove::StockAdvance]
@@ -339,7 +339,7 @@ impl PyramidMove {
         }
     }
 
-    /// Genera el movimiento de reciclado de stock si está disponible.
+    /// Generates the stock recycle move if available.
     pub fn find_stock_reset_moves(board: &PyramidBoard) -> Vec<PyramidMove> {
         if board.can_reset_stock() {
             vec![PyramidMove::StockReset]
@@ -348,7 +348,7 @@ impl PyramidMove {
         }
     }
 
-    /// Genera movimientos para retirar reyes expuestos (pirámide o descarte).
+    /// Generates moves to remove exposed Kings (pyramid or waste).
     pub fn find_king_moves(board: &PyramidBoard) -> Vec<PyramidMove> {
         let mut moves = Vec::new();
         for idx in board.exposed_pyramid_indices() {
@@ -366,7 +366,7 @@ impl PyramidMove {
         moves
     }
 
-    /// Genera parejas válidas entre descarte y pirámide que sumen 13.
+    /// Generates valid waste-pyramid pairs that sum to 13.
     pub fn find_waste_pyramid_pairs(board: &PyramidBoard) -> Vec<PyramidMove> {
         let waste_card = match board.waste_top() {
             Some(c) => c,
@@ -389,7 +389,7 @@ impl PyramidMove {
         moves
     }
 
-    /// Genera parejas válidas dentro de la pirámide que sumen 13.
+    /// Generates valid pairs within the pyramid that sum to 13.
     pub fn find_pyramid_pyramid_pairs(board: &PyramidBoard) -> Vec<PyramidMove> {
         let exposed = board.exposed_pyramid_indices();
         if exposed.is_empty() {
@@ -432,7 +432,7 @@ impl PyramidMove {
         moves
     }
 
-    /// Encuentra todos los movimientos disponibles.
+    /// Finds all available moves.
     pub fn find_all_moves(board: &PyramidBoard) -> Vec<PyramidMove> {
         let mut moves = Vec::new();
         moves.extend(Self::find_stock_reset_moves(board));
@@ -444,7 +444,7 @@ impl PyramidMove {
     }
 }
 
-// Igualdad personalizada que ignora la firma.
+// Custom equality that ignores the signature.
 impl PartialEq for PyramidBoard {
     fn eq(&self, other: &Self) -> bool {
         self.pyramid == other.pyramid
@@ -468,7 +468,7 @@ fn compute_signature(
     waste: &[Card],
     foundation: &[Card],
 ) -> u64 {
-    // FNV-1a de 64 bits para firma estable y rápida del estado del tablero.
+    // 64-bit FNV-1a for a stable and fast board-state signature.
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
 
@@ -481,7 +481,7 @@ fn compute_signature(
         h = h.wrapping_mul(FNV_PRIME);
     }
 
-    h ^= 0xFD; // separador
+    h ^= 0xFD; // separator
     h = h.wrapping_mul(FNV_PRIME);
 
     for card in stock {
@@ -489,7 +489,7 @@ fn compute_signature(
         h = h.wrapping_mul(FNV_PRIME);
     }
 
-    h ^= 0xFE; // separador
+    h ^= 0xFE; // separator
     h = h.wrapping_mul(FNV_PRIME);
 
     for card in waste {
@@ -497,7 +497,7 @@ fn compute_signature(
         h = h.wrapping_mul(FNV_PRIME);
     }
 
-    h ^= 0xFC; // separador
+    h ^= 0xFC; // separator
     h = h.wrapping_mul(FNV_PRIME);
 
     for card in foundation {
@@ -510,14 +510,14 @@ fn compute_signature(
 
 #[inline]
 fn encode_card(card: Card) -> u64 {
-    // Codificación compacta: valor en bits altos, palo en bajos.
+    // Compact encoding: value in high bits, suit in low bits.
     let suit_val: u64 = card.suit as u64;
     ((card.value as u64) << 4) | suit_val
 }
 
 #[inline]
 fn encode_opt_card(card: Option<Card>) -> u64 {
-    // 0xFF representa ausencia de carta.
+    // 0xFF represents absence of a card.
     match card {
         Some(c) => encode_card(c),
         None => 0xFF,

@@ -5,7 +5,7 @@ use super::board::{PyramidBoard, PyramidMove};
 use super::weights;
 use crate::common::card::Card;
 
-/// Características del tablero para evaluación heurística.
+/// Board features for heuristic evaluation.
 struct PyBoardFeatures {
     remaining_pyramid: i64,
     exposed_count: i64,
@@ -21,7 +21,7 @@ struct PyBoardFeatures {
 }
 
 fn board_features(board: &PyramidBoard) -> PyBoardFeatures {
-    // Extrae métricas del estado para priorizar nodos en la búsqueda A*.
+    // Extracts state metrics to prioritize nodes in A* search.
     let remaining = board.remaining_pyramid() as i64;
     let exposed = board.exposed_pyramid_indices();
     let exposed_count = exposed.len() as i64;
@@ -57,7 +57,7 @@ fn board_features(board: &PyramidBoard) -> PyBoardFeatures {
         0
     };
 
-    // Cartas expuestas cuyo complemento no está accesible (ni en otras expuestas, ni waste top, ni stock).
+    // Exposed cards whose complement is not accessible (not in other exposed cards, waste top, or stock).
     let unreachable_exposed: i64 = exposed
         .iter()
         .filter(|&&idx| {
@@ -66,10 +66,10 @@ fn board_features(board: &PyramidBoard) -> PyBoardFeatures {
                 None => return false,
             };
             if card.value == 13 {
-                return false; // reyes se remueven solos
+                return false; // Kings are removed on their own.
             }
             let complement = 13 - card.value;
-            // ¿Existe en otras cartas expuestas de la pirámide?
+            // Does it exist in other exposed pyramid cards?
             for &other in &exposed {
                 if other != idx {
                     if let Some(c) = board.pyramid[other] {
@@ -79,19 +79,19 @@ fn board_features(board: &PyramidBoard) -> PyBoardFeatures {
                     }
                 }
             }
-            // ¿Existe en el tope del waste?
+            // Does it exist on top of waste?
             if let Some(w) = board.waste_top() {
                 if w.value == complement {
                     return false;
                 }
             }
-            // ¿Existe en el stock?
+            // Does it exist in stock?
             for s in &board.stock {
                 if s.value == complement {
                     return false;
                 }
             }
-            true // complemento enterrado en pirámide no expuesta
+            true // Complement is buried in an unexposed pyramid card.
         })
         .count() as i64;
 
@@ -111,7 +111,7 @@ fn board_features(board: &PyramidBoard) -> PyBoardFeatures {
 }
 
 fn heuristic_cost(f: &PyBoardFeatures) -> i64 {
-    // Costo estimado restante (h): menor es mejor.
+    // Estimated remaining cost (h): lower is better.
     let scarce_pair = (weights::HEURISTIC_SCARCE_PAIR_TARGET - f.pair_options).max(0)
         * weights::HEURISTIC_SCARCE_PAIR_WEIGHT;
     let king_pressure = (weights::HEURISTIC_KING_PRESSURE_TARGET - f.exposed_kings).max(0)
@@ -131,7 +131,7 @@ fn heuristic_cost(f: &PyBoardFeatures) -> i64 {
 }
 
 fn progress_score(f: &PyBoardFeatures) -> i64 {
-    // Puntaje de progreso para conservar el mejor estado parcial.
+    // Progress score for preserving the best partial state.
     let removed =
         weights::PROGRESS_DECK_SIZE - (f.remaining_pyramid + f.stock_count + f.waste_count);
     removed * weights::PROGRESS_REMOVED_WEIGHT
@@ -145,7 +145,7 @@ fn progress_score(f: &PyBoardFeatures) -> i64 {
 }
 
 fn unlock_score(f: &PyBoardFeatures) -> i64 {
-    // Desempate: favorece estados con más opciones de desbloqueo.
+    // Tiebreaker: favors states with more unlocking options.
     f.exposed_count * weights::UNLOCK_EXPOSED_WEIGHT
         + f.exposed_kings * weights::UNLOCK_EXPOSED_KING_WEIGHT
         + f.pair_options * weights::UNLOCK_PAIR_OPTIONS_WEIGHT
@@ -154,7 +154,7 @@ fn unlock_score(f: &PyBoardFeatures) -> i64 {
         - f.deep_blocked_count * weights::UNLOCK_DEEP_BLOCKED_PENALTY
 }
 
-/// Solver A* puro de Pirámide con timeout y retorno parcial.
+/// Pure Pyramid A* solver with timeout and partial return.
 pub struct PyramidSolver {
     _private: (),
 }
@@ -170,11 +170,11 @@ impl PyramidSolver {
     }
 
     pub fn is_win(board: &PyramidBoard) -> bool {
-        // Victoria cuando toda la pirámide está vacía.
+        // Victory when the whole pyramid is empty.
         board.pyramid.iter().all(|c| c.is_none())
     }
 
-    /// Ejecuta A* con límite opcional de tiempo y retorno parcial opcional.
+    /// Runs A* with optional time limit and optional partial return.
     pub fn solve(
         &self,
         board: &PyramidBoard,
@@ -205,7 +205,7 @@ impl PyramidSolver {
             None
         };
 
-        // Arena de nodos para reconstrucción de camino por índices.
+        // Node arena for path reconstruction by index.
         let mut nodes: Vec<PySearchNode> = vec![PySearchNode {
             parent_index: None,
             the_move: None,
@@ -231,7 +231,7 @@ impl PyramidSolver {
         let mut best_progress = progress_score(&root_features);
         let mut expanded: usize = 0;
 
-        // Búsqueda A* pura: expande hasta solución, timeout, límite de nodos o frontera agotada.
+        // Pure A* search: expands until solution, timeout, node limit, or exhausted frontier.
         while let Some(current) = frontier.pop() {
             if let Some(t) = timeout {
                 if start.elapsed() > t {
@@ -263,7 +263,7 @@ impl PyramidSolver {
             let moves = PyramidMove::find_all_moves(&current_board);
 
             for the_move in moves {
-                // Filtro: tras un StockReset, el siguiente movimiento DEBE ser StockAdvance.
+                // Filter: after a StockReset, the next move MUST be StockAdvance.
                 if let Some(ref prev) = node_prev_move {
                     if prev.is_stock_reset() && !the_move.is_stock_advance() {
                         continue;
@@ -310,7 +310,7 @@ impl PyramidSolver {
             }
         }
 
-        // Sin solución: retorna mejor progreso parcial si se solicitó.
+        // No solution: return best partial progress if requested.
         if allow_partial && best_progress_idx != 0 {
             return PyramidSolveStats {
                 moves: Some(reconstruct_moves(best_progress_idx, &nodes)),
@@ -326,7 +326,7 @@ impl PyramidSolver {
 }
 
 pub fn deal(deck: &[Card]) -> Option<PyramidBoard> {
-    // Inicializa una partida desde un mazo completo de 52 cartas.
+    // Initializes a game from a complete 52-card deck.
     let m = PyramidMove::Deal {
         deck: deck.to_vec(),
     };
@@ -339,7 +339,7 @@ pub fn deal(deck: &[Card]) -> Option<PyramidBoard> {
 }
 
 fn reconstruct_moves(from: usize, nodes: &[PySearchNode]) -> Vec<PyramidMove> {
-    // Reconstruye el camino desde un nodo hasta la raíz.
+    // Reconstructs the path from a node back to the root.
     let mut moves = Vec::new();
     let mut cursor: Option<usize> = Some(from);
     while let Some(idx) = cursor {
@@ -353,26 +353,26 @@ fn reconstruct_moves(from: usize, nodes: &[PySearchNode]) -> Vec<PyramidMove> {
 }
 
 struct PySearchNode {
-    // Índice del padre en `nodes`.
+    // Parent index in `nodes`.
     parent_index: Option<usize>,
-    // Movimiento usado para llegar a este nodo desde su padre.
+    // Move used to reach this node from its parent.
     the_move: Option<PyramidMove>,
-    // Costo acumulado desde la raíz (g).
+    // Accumulated cost from the root (g).
     path_cost: usize,
 }
 
 struct PyFrontierItem {
-    // Referencia al nodo real almacenado en `nodes`.
+    // Reference to the real node stored in `nodes`.
     node_index: usize,
-    // Copia del tablero para expansión rápida.
+    // Board copy for fast expansion.
     board: PyramidBoard,
-    // Costo acumulado g.
+    // Accumulated g cost.
     g_score: usize,
-    // Heurística h.
+    // Heuristic h.
     h_score: i64,
-    // Puntaje de desbloqueo para desempate.
+    // Unlock score for tiebreaking.
     unlock_score: i64,
-    // Penalización de callejón sin salida para desempate.
+    // Dead-end penalty for tiebreaking.
     dead_end_penalty: i64,
 }
 
@@ -383,27 +383,27 @@ impl PyFrontierItem {
     }
 }
 
-// MinHeap con comparador de 5 campos, igual que Swift:
+// MinHeap with a 5-field comparator, same as Swift:
 // fScore → hScore → deadEndPenalty → unlockScore(desc) → nodeIndex
 struct MinHeap {
     storage: Vec<PyFrontierItem>,
 }
 
 impl MinHeap {
-    /// Crea un heap mínimo vacío.
+    /// Creates an empty min-heap.
     fn new() -> MinHeap {
         MinHeap {
             storage: Vec::new(),
         }
     }
 
-    /// Inserta un elemento y restaura propiedad de heap hacia arriba.
+    /// Inserts an item and restores the heap property upward.
     fn push(&mut self, item: PyFrontierItem) {
         self.storage.push(item);
         self.sift_up(self.storage.len() - 1);
     }
 
-    /// Extrae el mejor elemento (mínimo según comparador).
+    /// Extracts the best item (minimum by comparator).
     fn pop(&mut self) -> Option<PyFrontierItem> {
         if self.storage.is_empty() {
             return None;
@@ -413,13 +413,13 @@ impl MinHeap {
         }
         let last = self.storage.len() - 1;
         self.storage.swap(0, last);
-        let min = self.storage.pop().unwrap(); // Extrae el mínimo actual.
+        let min = self.storage.pop().unwrap(); // Extracts the current minimum.
         self.sift_down(0);
         Some(min)
     }
 
     fn is_higher(a: &PyFrontierItem, b: &PyFrontierItem) -> bool {
-        // "higher" significa mayor prioridad para salir antes del heap.
+        // "higher" means higher priority to leave the heap earlier.
         let fa = a.f_score();
         let fb = b.f_score();
         if fa != fb {
@@ -433,12 +433,12 @@ impl MinHeap {
         }
         if a.unlock_score != b.unlock_score {
             return a.unlock_score > b.unlock_score;
-        } // descendente
+        } // descending
         a.node_index < b.node_index
     }
 
     fn sift_up(&mut self, mut child: usize) {
-        // Propaga un nodo hacia la raíz mientras tenga mayor prioridad.
+        // Bubbles a node toward the root while it has higher priority.
         while child > 0 {
             let parent = (child - 1) / 2;
             if Self::is_higher(&self.storage[child], &self.storage[parent]) {
@@ -451,7 +451,7 @@ impl MinHeap {
     }
 
     fn sift_down(&mut self, mut parent: usize) {
-        // Empuja un nodo hacia abajo hasta restaurar el orden del heap.
+        // Pushes a node down until heap order is restored.
         loop {
             let left = 2 * parent + 1;
             let right = left + 1;

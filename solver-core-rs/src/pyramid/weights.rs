@@ -1,73 +1,73 @@
-//! Pesos y umbrales del solver de Pyramid.
-//! Centraliza constantes de heurística, progreso, desempate y límites de búsqueda.
+//! Pyramid solver weights and thresholds.
+//! Centralizes heuristic, progress, tiebreaker, and search-limit constants.
 
-// ── Límites de búsqueda ──────────────────────────
+// ── Search limits ──────────────────────────
 
-/// Máximo de nodos expandidos antes de detener la búsqueda A*.
+/// Maximum expanded nodes before stopping A* search.
 pub const MAX_NODES: usize = 300_000;
 
 // ── Heuristic Cost ──────────────────────────────
 
-/// Penalización aplicada cuando no hay flujo de stock ni opciones de remoción.
+/// Penalty applied when there is no stock flow and no removal option.
 pub const DEAD_END_PENALTY: i64 = 160;
 
-/// Cantidad objetivo de opciones de pareja antes de que la penalización por escasez sea cero.
+/// Target pair-option count before the scarcity penalty reaches zero.
 pub const HEURISTIC_SCARCE_PAIR_TARGET: i64 = 2;
-/// Peso de la penalización por escasez de opciones de pareja.
+/// Weight for the pair-option scarcity penalty.
 pub const HEURISTIC_SCARCE_PAIR_WEIGHT: i64 = 14;
-/// Cantidad objetivo de reyes expuestos antes de que la penalización de presión de reyes sea cero.
+/// Target exposed-King count before the King-pressure penalty reaches zero.
 pub const HEURISTIC_KING_PRESSURE_TARGET: i64 = 2;
-/// Peso de la penalización de presión de reyes.
+/// Weight for the King-pressure penalty.
 pub const HEURISTIC_KING_PRESSURE_WEIGHT: i64 = 10;
-/// Peso para cartas restantes en la pirámide.
+/// Weight for remaining pyramid cards.
 pub const HEURISTIC_REMAINING_PYRAMID_WEIGHT: i64 = 13;
-/// Peso para cartas bloqueadas.
+/// Weight for blocked cards.
 pub const HEURISTIC_BLOCKED_WEIGHT: i64 = 14;
-/// Peso para cartas bloqueadas en profundidad.
+/// Weight for deeply blocked cards.
 pub const HEURISTIC_DEEP_BLOCKED_WEIGHT: i64 = 18;
-/// Peso para tamaño del stock.
+/// Weight for stock size.
 pub const HEURISTIC_STOCK_WEIGHT: i64 = 2;
-/// Peso para tamaño del waste.
+/// Weight for waste size.
 pub const HEURISTIC_WASTE_WEIGHT: i64 = 1;
-/// Bonificación restada por oportunidades de pareja waste-pirámide (capeada a max 2).
+/// Subtracted bonus for waste-pyramid pair opportunities (capped at max 2).
 pub const HEURISTIC_WASTE_PAIR_BONUS: i64 = 5;
-/// Máximo de waste pairs que aplican bonus en la heurística.
+/// Maximum waste pairs that apply the heuristic bonus.
 pub const HEURISTIC_WASTE_PAIR_BONUS_CAP: i64 = 2;
-/// Peso para cartas expuestas cuyo complemento está enterrado (no en expuestas/waste/stock).
+/// Weight for exposed cards whose complement is buried (not exposed, in waste, or in stock).
 pub const HEURISTIC_UNREACHABLE_WEIGHT: i64 = 12;
 
 // ── Progress Score ──────────────────────────────
 
-/// Total de cartas en un mazo estándar.
+/// Total cards in a standard deck.
 pub const PROGRESS_DECK_SIZE: i64 = 52;
-/// Peso para cartas removidas.
+/// Weight for removed cards.
 pub const PROGRESS_REMOVED_WEIGHT: i64 = 120;
-/// Peso para cartas expuestas de la pirámide.
+/// Weight for exposed pyramid cards.
 pub const PROGRESS_EXPOSED_WEIGHT: i64 = 18;
-/// Peso para reyes expuestos.
+/// Weight for exposed Kings.
 pub const PROGRESS_EXPOSED_KING_WEIGHT: i64 = 24;
-/// Peso para opciones totales de pareja.
+/// Weight for total pair options.
 pub const PROGRESS_PAIR_OPTIONS_WEIGHT: i64 = 30;
-/// Peso para opciones de pareja waste-pirámide.
+/// Weight for waste-pyramid pair options.
 pub const PROGRESS_WASTE_PAIR_OPTIONS_WEIGHT: i64 = 12;
-/// Penalización para cartas bloqueadas.
+/// Penalty for blocked cards.
 pub const PROGRESS_BLOCKED_PENALTY: i64 = 14;
-/// Penalización para cartas bloqueadas en profundidad.
+/// Penalty for deeply blocked cards.
 pub const PROGRESS_DEEP_BLOCKED_PENALTY: i64 = 24;
-/// Multiplicador de la penalización de callejón sin salida en el puntaje de progreso.
+/// Multiplier for dead-end penalty in progress score.
 pub const PROGRESS_DEAD_END_MULTIPLIER: i64 = 1;
 
-// ── Puntaje de Desbloqueo (desempate) ───────────
+// ── Unlock Score (tiebreaker) ───────────
 
-/// Peso para cartas expuestas en el puntaje de desempate.
+/// Weight for exposed cards in the tiebreaker score.
 pub const UNLOCK_EXPOSED_WEIGHT: i64 = 8;
-/// Peso para reyes expuestos en el puntaje de desempate.
+/// Weight for exposed Kings in the tiebreaker score.
 pub const UNLOCK_EXPOSED_KING_WEIGHT: i64 = 14;
-/// Peso para opciones de pareja en el puntaje de desempate.
+/// Weight for pair options in the tiebreaker score.
 pub const UNLOCK_PAIR_OPTIONS_WEIGHT: i64 = 18;
-/// Peso para opciones de pareja waste-pirámide en el puntaje de desempate.
+/// Weight for waste-pyramid pair options in the tiebreaker score.
 pub const UNLOCK_WASTE_PAIR_OPTIONS_WEIGHT: i64 = 10;
-/// Penalización para cartas bloqueadas en el puntaje de desempate.
+/// Penalty for blocked cards in the tiebreaker score.
 pub const UNLOCK_BLOCKED_PENALTY: i64 = 5;
-/// Penalización para cartas bloqueadas en profundidad en el puntaje de desempate.
+/// Penalty for deeply blocked cards in the tiebreaker score.
 pub const UNLOCK_DEEP_BLOCKED_PENALTY: i64 = 10;
