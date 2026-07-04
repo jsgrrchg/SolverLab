@@ -2,14 +2,14 @@ use super::board::KlondikeBoard;
 use super::moves::KlondikeMove;
 
 // ═══════════════════════════════════════════
-// Transición de tablero
+// Board transition
 // ═══════════════════════════════════════════
 
-/// Representa el paso de un estado a otro durante la búsqueda IDA*.
-/// Contiene el tablero destino, el movimiento aplicado,
-/// el movimiento anterior (para detectar undos inmediatos) y la profundidad actual.
-/// El tablero origen (from_board) lo mantiene el caller y se pasa por referencia
-/// a las funciones que lo necesitan, evitando ~376 bytes de copia redundante por transición.
+/// Represents the step from one state to another during IDA* search.
+/// Contains the destination board, the applied move, the previous move
+/// (to detect immediate undos), and the current depth.
+/// The source board (from_board) is kept by the caller and passed by reference
+/// to functions that need it, avoiding ~376 bytes of redundant copy per transition.
 pub struct KlondikeTransition {
     pub to_board: KlondikeBoard,
     pub the_move: KlondikeMove,
@@ -18,41 +18,41 @@ pub struct KlondikeTransition {
 }
 
 // ═══════════════════════════════════════════
-// Reglas de poda
+// Pruning rules
 // ═══════════════════════════════════════════
 
-/// Reglas de poda que el solver aplica a cada transición antes de explorarla.
-/// Si alguna regla retorna `should_prune = true`, el movimiento se descarta
-/// sin descender en la rama de búsqueda.
+/// Pruning rules applied by the solver to each transition before exploring it.
+/// If any rule returns `should_prune = true`, the move is discarded without
+/// descending into the search branch.
 #[derive(Debug, Clone)]
 pub enum KlondikeRule {
-    /// Descarta movimientos que superen la profundidad máxima permitida.
+    /// Discards moves that exceed the maximum allowed depth.
     DepthLimit { max_depth: usize },
 
-    /// Descarta movimientos que deshagan exactamente el movimiento anterior
-    /// (undo inmediato). Evita ciclos cortos sin progreso.
+    /// Discards moves that exactly undo the previous move (immediate undo).
+    /// Prevents short cycles with no progress.
     NoImmediateUndo,
 
-    /// Descarta movimientos donde el tablero resultante es idéntico al anterior.
-    /// Protege contra movimientos que no cambian el estado (e.g., stock advance
-    /// con stock vacío que el motor no debería generar, pero por seguridad).
+    /// Discards moves where the resulting board is identical to the previous one.
+    /// Protects against moves that do not change state (e.g., stock advance with
+    /// an empty stock, which the engine should not generate, but is checked for safety).
     NoopTransition,
 
-    /// Solo permite mover un Rey a una columna vacía si el movimiento
-    /// expone al menos una carta boca abajo en la columna origen.
-    /// Evita mover Reyes a columnas vacías de forma improductiva.
+    /// Only allows moving a King to an empty column if the move exposes at least
+    /// one face-down card in the source column.
+    /// Prevents unproductive King moves to empty columns.
     KingToEmptyMustExpose,
 
-    /// Solo permite devolver una carta de foundation al tableau si el movimiento
-    /// incrementa el número total de cartas boca arriba en el tableau.
-    /// Evita undos de foundation puramente destructivos.
+    /// Only allows returning a card from a foundation to the tableau if the move
+    /// increases the total number of face-up cards in the tableau.
+    /// Prevents purely destructive foundation undos.
     FoundationRollback,
 }
 
 impl KlondikeRule {
-    /// Evalúa si un movimiento puede podarse ANTES de llamar a `apply()`.
-    /// Solo evalúa reglas que no necesitan el board resultante, evitando
-    /// la copia de ~376 bytes + compute_signature cuando la poda es segura.
+    /// Evaluates whether a move can be pruned BEFORE calling `apply()`.
+    /// Only evaluates rules that do not need the resulting board, avoiding
+    /// the ~376-byte copy + compute_signature when pruning is safe.
     pub fn can_prune_early(
         &self,
         board: &KlondikeBoard,
@@ -132,9 +132,9 @@ impl KlondikeRule {
         }
     }
 
-    /// Conjunto de reglas para el modo Fast: incluye todas las podas heurísticas
-    /// (`KingToEmptyMustExpose`, `FoundationRollback`) que reducen el espacio de
-    /// búsqueda agresivamente, a costa de no explorar algunos caminos poco comunes.
+    /// Rule set for Fast mode: includes all heuristic pruning rules
+    /// (`KingToEmptyMustExpose`, `FoundationRollback`) that aggressively reduce
+    /// the search space at the cost of not exploring some uncommon paths.
     pub fn default_rules_fast(max_depth: usize) -> Vec<KlondikeRule> {
         vec![
             KlondikeRule::DepthLimit { max_depth },
@@ -145,9 +145,9 @@ impl KlondikeRule {
         ]
     }
 
-    /// Conjunto de reglas para el modo Strict: solo incluye podas seguras
-    /// (límite de profundidad, undo inmediato, noop). Más lento pero completo:
-    /// no descarta ramas potencialmente válidas.
+    /// Rule set for Strict mode: only includes safe pruning rules
+    /// (depth limit, immediate undo, noop). Slower but complete: it does not
+    /// discard potentially valid branches.
     pub fn default_rules_strict(max_depth: usize) -> Vec<KlondikeRule> {
         vec![
             KlondikeRule::DepthLimit { max_depth },
@@ -156,27 +156,27 @@ impl KlondikeRule {
         ]
     }
 
-    /// Evalúa si una transición debe ser podada según esta regla.
-    /// Retorna `true` si el movimiento debe descartarse.
+    /// Evaluates whether a transition should be pruned by this rule.
+    /// Returns `true` if the move should be discarded.
     ///
-    /// Nota: `DepthLimit`, `NoImmediateUndo` y `KingToEmptyMustExpose` se evalúan
-    /// en `can_prune_early()` antes de `apply()`. Aquí retornan `false` directamente.
+    /// Note: `DepthLimit`, `NoImmediateUndo`, and `KingToEmptyMustExpose` are
+    /// evaluated in `can_prune_early()` before `apply()`. They return `false` here.
     pub fn should_prune(
         &self,
         transition: &KlondikeTransition,
         from_board: &KlondikeBoard,
     ) -> bool {
         match self {
-            // Evaluados en can_prune_early — no llegan aquí
+            // Evaluated in can_prune_early; they do not reach this point.
             KlondikeRule::DepthLimit { .. }
             | KlondikeRule::NoImmediateUndo
             | KlondikeRule::KingToEmptyMustExpose => false,
 
-            // Poda por noop: el tablero no cambió tras el movimiento
+            // Noop pruning: the board did not change after the move.
             KlondikeRule::NoopTransition => *from_board == transition.to_board,
 
-            // Poda de rollback de foundation: solo permite devolver una carta de foundation
-            // al tableau si el resultado tiene más cartas boca arriba que el estado anterior.
+            // Foundation rollback pruning: only allow returning a foundation card
+            // to the tableau if the result has more face-up cards than the previous state.
             KlondikeRule::FoundationRollback => {
                 if !transition.the_move.is_from_foundation() {
                     return false;
@@ -216,7 +216,7 @@ mod tests {
             .any(|r| matches!(r, KlondikeRule::KingToEmptyMustExpose))
     }
 
-    /// Verifica que Fast incluya las reglas heurísticas y Strict no.
+    /// Verifies that Fast includes the heuristic rules and Strict does not.
     #[test]
     fn fast_vs_strict_rule_sets_differ_on_heuristic_pruning() {
         let fast = KlondikeRule::default_rules_fast(100);
@@ -229,9 +229,9 @@ mod tests {
         assert!(!has_king_to_empty_must_expose(&strict));
     }
 
-    /// Verifica que KingToEmptyMustExpose permita el movimiento cuando expone
-    /// una carta boca abajo, y lo pode cuando no expone ninguna.
-    /// La poda se evalúa en can_prune_early (pre-apply), no en should_prune.
+    /// Verifies that KingToEmptyMustExpose allows the move when it exposes a
+    /// face-down card, and prunes it when it exposes none.
+    /// Pruning is evaluated in can_prune_early (pre-apply), not in should_prune.
     #[test]
     fn king_to_empty_must_expose_only_allows_hidden_flip() {
         let rule = KlondikeRule::KingToEmptyMustExpose;
@@ -241,7 +241,7 @@ mod tests {
             count: 1,
         };
 
-        // Caso permitido: columna 0 tiene una carta oculta debajo del Rey
+        // Allowed case: column 0 has a hidden card below the King.
         let mut from = KlondikeBoard::new();
         from.columns[0].push(Card::new(Suit::Club, 9), true);
         from.columns[0].push(Card::new(Suit::Heart, 13), false);
@@ -251,7 +251,7 @@ mod tests {
             "moving king should be allowed if it flips a hidden card"
         );
 
-        // Caso podado: columna 0 solo tiene el Rey, sin cartas ocultas debajo
+        // Pruned case: column 0 only has the King, with no hidden cards below.
         let mut no_expose = KlondikeBoard::new();
         no_expose.columns[0].push(Card::new(Suit::Spade, 13), false);
 

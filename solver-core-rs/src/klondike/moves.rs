@@ -34,11 +34,11 @@ pub enum KlondikeMove {
 }
 
 impl KlondikeMove {
-    // Genera todos los movimientos primitivos válidos
+    // Generates all valid primitive moves.
     pub fn find_candidate_moves(board: &KlondikeBoard, draw_advance: u8) -> Vec<KlondikeMove> {
         let mut moves = Vec::with_capacity(32);
 
-        // 1. Columna a Foundation
+        // 1. Column to foundation.
         for c in 0..7 {
             if let Some(card) = board.columns[c].top_face_up() {
                 if board.can_add_to_foundation(card) {
@@ -50,14 +50,14 @@ impl KlondikeMove {
             }
         }
 
-        // 2. Stock a Foundation
+        // 2. Stock to foundation.
         if let Some(card) = board.stock_pile_card() {
             if board.can_add_to_foundation(card) {
                 moves.push(KlondikeMove::StockPileToFoundation { card });
             }
         }
 
-        // 3. Columna a Columna
+        // 3. Column to column.
         for src in 0..7 {
             let col = &board.columns[src];
             if !col.has_face_up() {
@@ -70,7 +70,7 @@ impl KlondikeMove {
                 let run_base = col.cards[current_idx as usize];
 
                 if run_base.value == 13 && k == num_up as usize && col.face_down_len == 0 {
-                    continue; // Mover Rey en columna vacía es redundante
+                    continue; // Moving a King to an empty column is redundant.
                 }
 
                 for dest in 0..7 {
@@ -88,7 +88,7 @@ impl KlondikeMove {
             }
         }
 
-        // 4. Stock a Columna
+        // 4. Stock to column.
         if let Some(card) = board.stock_pile_card() {
             for dest in 0..7 {
                 if board.columns[dest].can_add_run(card) {
@@ -100,7 +100,7 @@ impl KlondikeMove {
             }
         }
 
-        // 5. Foundation a Columna
+        // 5. Foundation to column.
         for &suit in crate::common::card::Suit::ALL.iter() {
             if let Some(card) = board.top_of_foundation(suit) {
                 for dest in 0..7 {
@@ -114,7 +114,7 @@ impl KlondikeMove {
             }
         }
 
-        // 6. Avance de Stock
+        // 6. Stock advance.
         if board.can_advance_stock() {
             moves.push(KlondikeMove::StockPileAdvance {
                 beginning_index: board.stock_index as u8,
@@ -122,7 +122,7 @@ impl KlondikeMove {
             });
         }
 
-        // 7. Reciclar Stock
+        // 7. Stock recycle.
         if board.can_recycle_stock() {
             moves.push(KlondikeMove::StockPileRecycle {
                 source_index: board.stock_index as u8,
@@ -155,7 +155,7 @@ impl KlondikeMove {
                 }
 
                 s_col.len -= count;
-                // Expone una carta si la secuencia consumió todas las cartas boca arriba
+                // Reveals a card if the moved run consumed all face-up cards.
                 if s_col.len > 0 && s_col.face_down_len == s_col.len {
                     s_col.face_down_len -= 1;
                 }
@@ -170,7 +170,7 @@ impl KlondikeMove {
                 board.stock_recycles = 0;
                 let s_idx = source as usize;
                 let card = board.columns[s_idx].pop()?;
-                board.foundation[card.suit as usize] = card.value; // Almacena el rango más alto
+                board.foundation[card.suit as usize] = card.value; // Stores the highest rank.
 
                 let col = &mut board.columns[s_idx];
                 if col.len > 0 && col.face_down_len == col.len {
@@ -239,7 +239,7 @@ impl KlondikeMove {
                 board.stock_index = 0;
                 board.stock_recycles += 1;
             }
-            KlondikeMove::Deal => return None, // Deal no debería ser aplicado dinámicamente dentro del flujo IDA*
+            KlondikeMove::Deal => return None, // Deal should not be applied dynamically in the IDA* flow.
         }
 
         board.compute_signature();
@@ -281,7 +281,7 @@ pub fn find_column_to_foundation_moves(board: &KlondikeBoard) -> Vec<KlondikeMov
     moves
 }
 
-// Estos métodos de compatibilidad son solo atajos para el agrupamiento de find_candidate_moves
+// These compatibility methods are just shortcuts for the find_candidate_moves grouping.
 pub fn find_stock_to_foundation_moves(board: &KlondikeBoard) -> Vec<KlondikeMove> {
     if let Some(card) = board.stock_pile_card() {
         if board.can_add_to_foundation(card) {
