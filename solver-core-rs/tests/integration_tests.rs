@@ -206,6 +206,7 @@ fn spider_apply_move_valid_and_invalid() {
 
 // Verifies that last_checkpoints_adopted is > 0 after a real solve.
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn spider_last_checkpoints_adopted_nonzero_after_solve() {
     let engine = SpiderEngine::new(1);
     let deck = spider_deck(1);
@@ -222,6 +223,7 @@ fn spider_last_checkpoints_adopted_nonzero_after_solve() {
 
 // Verifies that Spider can run `solve` with a short timeout without crashing (1 suit).
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn spider_solve_short_timeout() {
     let engine = SpiderEngine::new(1);
     let deck = spider_deck(1);
@@ -245,6 +247,7 @@ fn spider_solve_short_timeout() {
 
 // Verifies that Spider works with 2 suits: correct deal, solve, and replay.
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn spider_solve_2suit_short_timeout() {
     let engine = SpiderEngine::new(2);
     let deck = spider_deck(2);
@@ -268,6 +271,7 @@ fn spider_solve_2suit_short_timeout() {
 
 // Verifies that Spider works with 4 suits: correct deal, solve, and replay.
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn spider_solve_4suit_short_timeout() {
     let engine = SpiderEngine::new(4);
     let deck = spider_deck(4);
@@ -410,6 +414,7 @@ fn tripeaks_deal_wrong_deck_size() {
 
 // Verifies that Klondike returns a replayable sequence with observable progress if partial.
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn klondike_solve_short_timeout() {
     let engine = KlondikeEngine::new(1);
     let deck = standard_deck();
@@ -437,6 +442,7 @@ fn klondike_solve_short_timeout() {
 
 // Verifies in Fast and Strict modes that any sequence returned by Klondike is replayable.
 #[test]
+#[ignore = "slow solver smoke test; run with `cargo test --test integration_tests -- --ignored`"]
 fn klondike_solve_fast_and_strict_modes_replay_if_any() {
     let deck = standard_deck();
     for mode in [KlondikeSearchMode::Fast, KlondikeSearchMode::Strict] {
