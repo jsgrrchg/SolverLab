@@ -4,6 +4,7 @@ xcuserdata/
 **/xcuserdata/
 *.xccheckout
 *.moved-aside
+*.xcodeproj.backup/
 DerivedData/
 .derived/
 *.hmap
