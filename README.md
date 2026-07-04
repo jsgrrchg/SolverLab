@@ -1,82 +1,95 @@
-# Solverapp
+# SolverLab
 
-App de simulación y evaluación para juegos de Solitario, construida con SwiftUI en el frontend y un core de alto rendimiento en Rust (`solver-core-rs`).
-Permite ejecutar lotes de partidas, medir rendimiento, comparar heurísticas y exportar resultados a CSV.
+SolverLab is a Rust solitaire solver with deterministic solver logic and a SwiftUI dashboard for prototyping integration with native Swift games. The Rust core is exposed through UniFFI and is designed to balance speed with CPU and memory usage so it can run on modern processors, including phones, while streaming useful progress back to a graphical host app through replayable moves, partial results, progress tokens, and adopted checkpoints.
 
-## Juegos Soportados
+## Supported Games
 
-- **Klondike** (Draw 1 / Draw 3)
-- **FreeCell**
-- **Pyramid**
-- **TriPeaks**
-- **Spider** (1, 2, y 4 palos)
+- Klondike, draw 1 and draw 3
+- FreeCell
+- Pyramid
+- TriPeaks
+- Spider, 1-suit, 2-suit, and 4-suit
 
-## Compilación y Ejecución
+## Features
 
-**Ruta del proyecto:** antes de ejecutar asegúrate de estar en la raíz del repositorio.
+- Batch simulations with configurable parallelism
+- Per-game timeout, search depth, and undo limits
+- Deterministic solver logic: the same board and settings produce the same solver path
+- Resource-aware search designed to balance speed, CPU usage, and memory pressure
+- Checkpoint-oriented progress reporting for graphical game integrations
+- Solver metrics, stop reasons, scores, checkpoint counts, and CSV export
+- Rust search core with Swift bindings packaged as `SolverCoreRS.xcframework`
 
-**Ejecución desde consola:**
+## Integration Model
+
+The solvers are built for native UI integration. Each engine exposes a Swift-friendly API to solve with `allow_partial`, replay returned moves with `apply_move`, compare progress with `progress_token`, and inspect how many checkpoints were adopted with `last_checkpoints_adopted`.
+
+This lets a graphical game use the Rust solver as a deterministic planning engine while keeping animation, state display, and user interaction in a graphical game.
+
+Note: the solver core does not depend on SwiftUI. The dashboard is only a prototyping host, and the Rust library can be packaged for other native apps.
+
+## Win Rate
+
+- Klondike draw 1: approximately 80% in current internal runs, with solve times typically between 2 and 5 seconds per game
+- Klondike draw 3: approximately 65% in current internal runs, with solve times typically between 2 and 5 seconds per game
+- FreeCell: approximately 95% in current internal runs, with solve times typically under 1 second per game
+- Pyramid: approximately 75% in current internal runs, with solve times typically under 1 second per game
+- TriPeaks: approximately 87% in current internal runs, with solve times typically under 1 second per game
+- Spider 1-suit: approximately 95% in current internal runs, with solve times typically between 1 and 5 seconds per game
+- Spider 2-suit: approximately 60% in current internal runs, with solve times typically between 2 and 60 seconds per game; there is still room for optimization
+- Spider 4-suit: currently under study, with poor win rates and solve times; it is not usable yet and is technically the hardest variant to solve deterministically
+- More game variants and benchmark numbers will be added in the future.
+
+Win rates vary by game variant, timeout, search limits, and resource budget.
+
+## Requirements
+
+- macOS 13 or newer
+- Xcode with Swift 6.1 toolchain support
+- Rust stable toolchain with Cargo
+- Apple Silicon or Intel Mac for local development
+
+## Quick Start
+
 ```bash
-cd "$(git rev-parse --show-toplevel)"
 swift run -c release SolverLabApp
 ```
 
-## Controles principales
+To rebuild the Rust core and regenerate the Swift bindings:
 
-- **Juego:** Selección de la variante de solitario a simular.
-- **Simulaciones:** Total de partidas a ejecutar en el lote.
-- **Paralelos:** Cantidad de workers concurrentes (ajuste manual).
-- **Paralelo auto:** Ajusta automáticamente la cantidad de workers durante la corrida para optimizar el uso de CPU.
-- **Undos:** Límite máximo de undos (deshacer) por partida.
-  - Usa `-1` para undos ilimitados.
-  - En *Klondike*, limita la cantidad de veces que se puede bajar una carta del foundation al tableau.
-  - En *Pyramid*, limita la cantidad de movimientos `undo` totales (retrocesos de estado).
-- **Timeout (s):** Tiempo máximo permitido por partida antes de abortar.
-- **Max depth:** Profundidad máxima de búsqueda en el árbol de estados.
+```bash
+make xcframework
+```
 
-## Arquitectura y Algoritmos de Búsqueda
+## Tests
 
-El motor de resolución (Solver Core) está escrito en Rust y expuesto a Swift vía UniFFI. Usa distintos algoritmos según la naturaleza del juego:
+Run the default fast local test suite:
 
-- **Klondike:** Usa **IDA*** (Iterative Deepening A*) con múltiples optimizaciones avanzadas:
-  - Heurísticas *Thoughtful* (evaluación profunda del tablero y recompensas por revelar cartas clave).
-  - Detección de deadlocks.
-  - Tablas de Transposición (TT) locales persistentes entre bounds.
-  - Adopción de checkpoints parciales (`allow_partial`) para no perder el progreso en partidas extremadamente complejas que superen el límite de nodos o timeout.
-- **Spider:** Usa **DFS Chunked con Checkpoints y Multi-Attempt**: búsqueda en chunks encadenados por checkpoints, TT persistente entre chunks con evicción parcial, múltiples intentos con perturbación determinista del ordenamiento, y heurísticas diferenciadas por variante (1/2/4 palos).
-- **FreeCell:** Usa **A*** para encontrar la ruta óptima.
-- **TriPeaks:** Usa **A*** con reglas de expansión de tablero.
-- **Pyramid:** Usa **DFS** (Depth-First Search) con filtros y soporte nativo de deshacer (undo tracking).
+```bash
+cd solver-core-rs && cargo test
+swift test
+```
 
-## Resultados y Stop Reason
-Al finalizar una simulación, cada partida puede terminar en uno de estos estados:
-- `win`: La partida se resolvió exitosamente.
-- `timeout`: No se resolvió dentro del tiempo configurado.
-- `stalled`: Terminó sin ganar antes del timeout por falta de progreso útil o fin de los caminos explorables (dead end).
+Run the slower ignored Rust smoke tests when validating full solver behavior:
 
-## Sistema de Puntaje Promedio (Scoring)
-La app registra métricas que buscan emular las puntuaciones tradicionales:
+```bash
+cd solver-core-rs && cargo test --test integration_tests -- --ignored
+```
 
-- **Klondike:**
-  - +10 a foundation
-  - +5 a tableau desde el mazo
-  - -15 al bajar de foundation a tableau (con piso en 0)
-  - +5 al revelar una carta volteada en el tableau
-- **Pyramid:**
-  - +10 rey a foundation
-  - +20 por remover un par
-  - Realizar undo revierte el score asociado.
-- **TriPeaks:**
-  - +5 por remover una carta al waste (multiplicado por racha actual)
-  - -5 al robar desde el stock (con piso en 0)
+## Project Layout
 
-Internamente el algoritmo cuenta con un propio sistema de puntajes para evaluar el mejor plan a seguir. 
+```text
+Sources/                  SwiftUI app and Swift bridge code
+solver-core-rs/           Rust solver core and UniFFI definitions
+SolverCoreRS.xcframework  Packaged native solver library
+Tests/                    Swift test target
+scripts/                  Local helper scripts
+```
 
-## Exportación a CSV
+## Sponsorship
 
-La herramienta permite exportar resultados detallados una vez finalizado el batch. El archivo CSV generado contiene:
-1. **Configuración:** Parámetros usados en la corrida:
-   `juego,busqueda,simulaciones,paralelos,paralelo_auto,undos,timeout_s,max_depth`
-2. **Resumen:** Métricas globales del batch (Winrate, Tiempo total, Promedios).
-3. **Detalle por partida:** Información exhaustiva línea por línea:
-   `game_id,num_moves,undos,checkpoints,result,stop_reason,duration_sec,score`
+If you use SolverLab in a consumer game, please consider sponsoring the project to support continued development, higher win rates, and better CPU and memory efficiency.
+
+## License
+
+Apache-2.0
