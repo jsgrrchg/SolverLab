@@ -1,4 +1,4 @@
-.PHONY: build-rust generate-bindings xcframework clean check test coverage-rust
+.PHONY: build-rust generate-bindings xcframework clean check test coverage-rust tui tui-run tui-test
 
 # Configuration
 MAKEFILE_DIR := $(CURDIR)/
@@ -6,6 +6,7 @@ CRATE_DIR = $(MAKEFILE_DIR)solver-core-rs
 LIB_NAME = solver_core
 OUT_DIR = $(MAKEFILE_DIR)Sources/SolverCoreRS
 FRAMEWORK_NAME = SolverCoreRS
+TUI_DIR = $(MAKEFILE_DIR)solverlab-tui
 CARGO_TARGET_DIR ?= $(CRATE_DIR)/target
 
 # Default target
@@ -22,6 +23,16 @@ test:
 # Generate Rust coverage report with the fast test suite
 coverage-rust:
 	"$(MAKEFILE_DIR)scripts/coverage-rust.sh"
+
+# Terminal console (ratatui)
+tui:
+	cd "$(TUI_DIR)" && cargo build --release
+
+tui-run:
+	cd "$(TUI_DIR)" && cargo run --release
+
+tui-test:
+	cd "$(TUI_DIR)" && cargo test
 
 # Build for both architectures
 build-rust:
