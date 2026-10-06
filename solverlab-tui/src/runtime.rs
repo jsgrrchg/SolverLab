@@ -91,6 +91,15 @@ impl RunHandle {
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
+
+    /// Handle for a run that has no runner thread (tests).
+    #[cfg(test)]
+    pub(crate) fn idle(run_id: u64) -> Self {
+        RunHandle {
+            run_id,
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 pub fn cpu_count() -> usize {
