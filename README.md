@@ -46,10 +46,8 @@ Win rates vary by game variant, timeout, search limits, and resource budget.
 
 ## Requirements
 
-- macOS 13 or newer
-- Xcode with Swift 6.1 toolchain support
-- Rust stable toolchain with Cargo
-- Apple Silicon or Intel Mac for local development
+- Rust stable toolchain with Cargo (1.86 or newer for the terminal console)
+- For the SwiftUI dashboard only: macOS 13 or newer, Xcode with Swift 6.1 toolchain support, Apple Silicon or Intel Mac
 
 ## Quick Start
 
@@ -63,6 +61,51 @@ To rebuild the Rust core and regenerate the Swift bindings:
 make xcframework
 ```
 
+## Terminal Console (TUI)
+
+`solverlab-tui/` is a cross-platform copy of the SwiftUI simulation console built with [ratatui](https://ratatui.rs). It links the Rust core directly (no UniFFI) and offers the same controls, metrics, results table and CSV export, so the solvers can be exercised on Linux, Windows and macOS.
+
+```bash
+cd solverlab-tui && cargo run --release
+# or
+make tui-run
+```
+
+| Keys | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Move focus |
+| `Enter` / `Space` | Activate the focused control |
+| `←` `→` on Game, `g` / `G` | Change game |
+| digits, `Backspace`, `↑` `↓` on Sims / Parallel | Edit values (`Shift`: ±10) |
+| `a` | Toggle auto parallelism |
+| `s` | Start / Stop |
+| `e` | Export CSV |
+| `c` | Clear data |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | Scroll results |
+| `[` `]` | Change sort column (always descending) |
+| `?` | Help |
+| `q` / `Esc` / `Ctrl+C` | Quit |
+
+Useful flags (`--help` lists all of them): `--game`, `--sims`, `--parallel`, `--auto`, `--timeout`, `--seed`, `--config`, `--no-persist`, `--ascii`.
+
+Headless mode runs without a terminal UI and prints the CSV, which is handy for CI or remote machines. With `--seed`, every platform deals the same boards, so results can be compared across machines:
+
+```bash
+solverlab-tui --headless --game tripeaks --sims 200 --auto --seed 1234 --csv linux.csv
+# same command on another platform → windows.csv, then compare the CPU-independent columns
+sed -n '/^details$/,$p' linux.csv   | cut -d, -f1-5,8 > a
+sed -n '/^details$/,$p' windows.csv | cut -d, -f1-5,8 > b
+diff a b
+```
+
+Differences from the SwiftUI app:
+
+- Config fields are locked while a run is active.
+- `--seed` makes decks reproducible; without it decks are random, as in the app.
+- CSV export asks for a path in the terminal instead of a save panel.
+- The config is stored as JSON in the platform config directory, not in `UserDefaults`.
+- Stopping a run, like in the app, does not interrupt games already being solved; their results are discarded.
+
 ## Tests
 
 Run the default fast local test suite:
@@ -70,6 +113,12 @@ Run the default fast local test suite:
 ```bash
 cd solver-core-rs && cargo test
 swift test
+```
+
+Run the terminal console tests:
+
+```bash
+make tui-test
 ```
 
 Run the slower ignored Rust smoke tests when validating full solver behavior:
@@ -83,6 +132,7 @@ cd solver-core-rs && cargo test --test integration_tests -- --ignored
 ```text
 Sources/                  SwiftUI app and Swift bridge code
 solver-core-rs/           Rust solver core and UniFFI definitions
+solverlab-tui/            Cross-platform terminal console (ratatui)
 SolverCoreRS.xcframework  Packaged native solver library
 Tests/                    Swift test target
 scripts/                  Local helper scripts

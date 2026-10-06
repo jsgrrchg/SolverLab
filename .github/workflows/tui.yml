@@ -1,0 +1,87 @@
+name: TUI
+
+on:
+  push:
+    paths:
+      - "solverlab-tui/**"
+      - "solver-core-rs/**"
+      - ".github/workflows/tui.yml"
+  pull_request:
+    paths:
+      - "solverlab-tui/**"
+      - "solver-core-rs/**"
+      - ".github/workflows/tui.yml"
+
+defaults:
+  run:
+    working-directory: solverlab-tui
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: solverlab-tui
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Slow smoke tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --release -- --ignored
+
+  seeded-run:
+    name: Seeded run (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: solverlab-tui
+      - name: Run headless simulations
+        shell: bash
+        run: |
+          for game in freecell pyramid tripeaks; do
+            cargo run --release -- --headless --quiet --game "$game" --sims 20 \
+              --parallel 2 --seed 1234 --csv "../seeded-$game.csv"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seeded-${{ matrix.os }}
+          path: seeded-*.csv
+
+  compare:
+    name: Compare seeded runs across platforms
+    needs: seeded-run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Diff CPU-independent columns
+        shell: bash
+        run: |
+          status=0
+          for game in freecell pyramid tripeaks; do
+            for os in macos-latest windows-latest; do
+              diff <(sed -n '/^details$/,$p' "seeded-ubuntu-latest/seeded-$game.csv" | tr -d '\r' | cut -d, -f1-5,8) \
+                   <(sed -n '/^details$/,$p' "seeded-$os/seeded-$game.csv" | tr -d '\r' | cut -d, -f1-5,8) \
+                || { echo "::error::$game differs between ubuntu and $os"; status=1; }
+            done
+          done
+          exit $status
