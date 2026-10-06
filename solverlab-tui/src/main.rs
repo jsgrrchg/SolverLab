@@ -6,6 +6,8 @@ mod deck;
 #[allow(dead_code)]
 mod format;
 #[allow(dead_code)]
+mod games;
+#[allow(dead_code)]
 mod model;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
