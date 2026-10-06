@@ -9,6 +9,8 @@ mod format;
 mod games;
 #[allow(dead_code)]
 mod model;
+#[allow(dead_code)]
+mod runtime;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::widgets::{Block, Paragraph};
