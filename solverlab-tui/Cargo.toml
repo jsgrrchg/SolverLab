@@ -13,6 +13,8 @@ path = "src/main.rs"
 solver_core = { path = "../solver-core-rs" }
 ratatui = "0.30"
 color-eyre = "0.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 
 [profile.release]
 opt-level = 3

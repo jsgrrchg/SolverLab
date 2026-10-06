@@ -1,3 +1,7 @@
+// Modules are wired into the UI incrementally; allow unused items until then.
+#[allow(dead_code)]
+mod model;
+
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::widgets::{Block, Paragraph};
 
