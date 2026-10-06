@@ -12,6 +12,8 @@ mod games;
 #[allow(dead_code)]
 mod model;
 #[allow(dead_code)]
+mod persist;
+#[allow(dead_code)]
 mod runtime;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};

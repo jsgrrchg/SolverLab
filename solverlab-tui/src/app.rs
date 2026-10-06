@@ -8,6 +8,7 @@ use std::time::Instant;
 use crate::deck::ShuffleSource;
 use crate::format::format_duration;
 use crate::model::{SimConfig, SimResult, StopReason};
+use crate::persist::ConfigStore;
 use crate::runtime::{
     ActiveGamesClock, RunEvent, RunHandle, auto_parallel_initial, cpu_count, spawn_simulation,
 };
@@ -46,6 +47,7 @@ pub struct App {
     tx: Sender<RunEvent>,
     spawner: Spawner,
     cpu: usize,
+    store: ConfigStore,
 }
 
 impl App {
@@ -86,6 +88,25 @@ impl App {
             tx,
             spawner,
             cpu,
+            store: ConfigStore::disabled(),
+        }
+    }
+
+    /// Persists every config change to `store` (Swift: `didSet { persistConfig() }`).
+    pub fn with_store(mut self, store: ConfigStore) -> Self {
+        self.store = store;
+        self
+    }
+
+    /// Mutates the config and saves it when something changed.
+    pub fn set_config(&mut self, update: impl FnOnce(&mut SimConfig)) {
+        let before = self.config.clone();
+        update(&mut self.config);
+        if self.config == before {
+            return;
+        }
+        if let Err(err) = self.store.save(&self.config) {
+            self.status_text = format!("Config not saved: {err}");
         }
     }
 
@@ -326,6 +347,33 @@ pub(crate) mod tests {
             App::with_spawner(config, ShuffleSource::Seeded(1), tx, spawner, 8),
             rx,
         )
+    }
+
+    #[test]
+    fn set_config_persists_only_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let (app, _rx) = idle_app(SimConfig::default());
+        let mut app = app.with_store(ConfigStore::at(&path));
+
+        app.set_config(|_| {});
+        assert!(!path.exists());
+
+        app.set_config(|c| c.simulations = 12);
+        assert_eq!(ConfigStore::at(&path).load().simulations, 12);
+    }
+
+    #[test]
+    fn set_config_reports_save_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, "").unwrap();
+        let (app, _rx) = idle_app(SimConfig::default());
+        let mut app = app.with_store(ConfigStore::at(blocker.join("config.json")));
+
+        app.set_config(|c| c.simulations = 1);
+        assert_eq!(app.config.simulations, 1);
+        assert!(app.status_text.starts_with("Config not saved"));
     }
 
     #[test]
