@@ -1,7 +1,8 @@
 //! Rendering, ported from `ContentView.swift`. `draw` is a pure function of
 //! the app state plus view-only state (focus, sorting, scroll).
 
-mod controls;
+pub mod controls;
+mod help;
 mod metrics;
 mod progress;
 mod table;
@@ -158,7 +159,7 @@ pub struct ViewState {
 impl ViewState {
     pub fn new(ascii: bool) -> Self {
         ViewState {
-            focus: Focus::StartStop,
+            focus: Focus::Game,
             editing: None,
             sort_column: SortColumn::default(),
             table: TableState::default(),
@@ -206,6 +207,10 @@ pub fn draw(frame: &mut Frame, app: &App, view: &mut ViewState) {
     metrics::render(frame, metrics_area, app, wide);
     table::render(frame, table_area, app, view);
     frame.render_widget(footer(), footer_area);
+
+    if view.show_help {
+        help::render(frame, area);
+    }
 }
 
 fn footer() -> Line<'static> {
