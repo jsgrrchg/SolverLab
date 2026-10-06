@@ -2,6 +2,8 @@
 #[allow(dead_code)]
 mod csv;
 #[allow(dead_code)]
+mod deck;
+#[allow(dead_code)]
 mod format;
 #[allow(dead_code)]
 mod model;
