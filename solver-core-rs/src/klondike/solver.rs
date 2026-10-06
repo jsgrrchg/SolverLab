@@ -831,6 +831,192 @@ mod tests {
         Card::new(suit, value)
     }
 
+    // Complete the inverse-move fixtures with all 52 cards. Low foundations and
+    // a King atop column 6 avoid introducing forced safe foundation moves.
+    fn complete_inverse_fixture(board: &mut KlondikeBoard) {
+        for rank in &mut board.foundation {
+            *rank = (*rank).max(4);
+        }
+        let remaining: Vec<_> = Card::standard_deck()
+            .into_iter()
+            .filter(|card| {
+                card.value > board.foundation[card.suit as usize]
+                    && !board
+                        .columns
+                        .iter()
+                        .any(|column| column.cards[..column.len as usize].contains(card))
+            })
+            .collect();
+        board.stock[..24].copy_from_slice(&remaining[..24]);
+        board.stock_len = 24;
+        for (index, &card) in remaining[24..].iter().enumerate() {
+            board.columns[6].push(card, index + 25 < remaining.len());
+        }
+        board.compute_signature();
+        assert_full_deck(board);
+    }
+
+    fn assert_full_deck(board: &KlondikeBoard) {
+        let mut cards = board.stock[..board.stock_len as usize].to_vec();
+        for column in &board.columns {
+            cards.extend_from_slice(&column.cards[..column.len as usize]);
+        }
+        for suit in Suit::ALL {
+            cards.extend((1..=board.foundation[suit as usize]).map(|rank| card(suit, rank)));
+        }
+        cards.sort_by_key(|card| card.encode());
+        assert_eq!(cards, Card::standard_deck());
+    }
+
+    #[test]
+    fn immediate_column_inverse_preserves_a_reveal_for_single_cards_and_runs() {
+        for count in [1, 2] {
+            let mut board = KlondikeBoard::new();
+            board.columns[0].push(card(Suit::Diamond, 9), true);
+            board.columns[0].push(card(Suit::Club, 8), true);
+            board.columns[0].push(card(Suit::Heart, 7), false);
+            if count == 2 {
+                board.columns[0].push(card(Suit::Club, 6), false);
+            }
+            board.columns[1].push(card(Suit::Spade, 8), false);
+            complete_inverse_fixture(&mut board);
+
+            let forward = KlondikeMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                count,
+            };
+            let inverse = KlondikeMove::ColumnToColumn {
+                source: 1,
+                destination: 0,
+                count,
+            };
+            for draw in [1, 3] {
+                for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                    let solver = KlondikeSolver::new_with_mode(draw, mode);
+                    let after = solver
+                        .successors(&board, None, 0)
+                        .into_iter()
+                        .find(|t| t.the_move == forward)
+                        .expect("the reveal must be a legal successor")
+                        .to_board;
+                    assert_full_deck(&after);
+                    assert_eq!(after.columns[0].face_down_len, 1);
+                    let restored = solver
+                        .successors(&after, Some(forward), 1)
+                        .into_iter()
+                        .find(|t| t.the_move == inverse)
+                        .expect("returning the run must preserve the reveal")
+                        .to_board;
+                    assert_full_deck(&restored);
+                    assert_eq!(restored.columns[0].face_down_len, 1);
+                    assert_eq!(restored.columns[0].len, board.columns[0].len);
+                    assert_eq!(restored.columns[1].len, board.columns[1].len);
+                    assert_ne!(restored.signature, board.signature);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immediate_foundation_inverse_preserves_a_reveal_or_returns_an_ancestor() {
+        for hidden in [false, true] {
+            let mut board = KlondikeBoard::new();
+            board.foundation[Suit::Heart as usize] = 6;
+            board.columns[0].push(card(Suit::Club, 8), hidden);
+            board.columns[0].push(card(Suit::Heart, 7), false);
+            complete_inverse_fixture(&mut board);
+            let forward = KlondikeMove::ColumnToFoundation {
+                source: 0,
+                card: card(Suit::Heart, 7),
+            };
+            let inverse = KlondikeMove::FoundationToColumn {
+                destination: 0,
+                card: card(Suit::Heart, 7),
+            };
+            // The opposite-color foundations lag behind: this is not a forced safe move.
+            assert!(!is_safe_move_pre_check(&forward, &board));
+            for draw in [1, 3] {
+                for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                    let solver = KlondikeSolver::new_with_mode(draw, mode);
+                    let after = solver
+                        .successors(&board, None, 0)
+                        .into_iter()
+                        .find(|t| t.the_move == forward)
+                        .expect("the non-safe foundation move must be available")
+                        .to_board;
+                    assert_full_deck(&after);
+                    let restored = solver
+                        .successors(&after, Some(forward), 1)
+                        .into_iter()
+                        .find(|t| t.the_move == inverse)
+                        .expect("one face-up card may be the result of a reveal")
+                        .to_board;
+                    assert_full_deck(&restored);
+                    assert_eq!(restored.columns[0].face_down_len, 0);
+                    assert_eq!(restored.foundation, board.foundation);
+                    assert_eq!(restored.signature != board.signature, hidden);
+                    // Foundation -> column never reveals a hidden tableau card.
+                    assert!(!solver
+                        .successors(&restored, Some(inverse), 2)
+                        .iter()
+                        .any(|t| t.the_move == forward));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immediate_inverse_without_a_reveal_is_rejected_by_search_as_a_cycle() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 8), false);
+        board.columns[0].push(card(Suit::Heart, 7), false);
+        board.columns[1].push(card(Suit::Spade, 8), false);
+        board.compute_signature();
+        let forward = KlondikeMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            count: 1,
+        };
+        let after = forward.apply(board).unwrap();
+        let inverse = KlondikeMove::ColumnToColumn {
+            source: 1,
+            destination: 0,
+            count: 1,
+        };
+
+        for draw in [1, 3] {
+            for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                let solver = KlondikeSolver::new_with_mode(draw, mode);
+                let transitions = solver.successors(&after, Some(forward), 1);
+                assert_eq!(transitions.len(), 1);
+                assert_eq!(transitions[0].the_move, inverse);
+                assert_eq!(transitions[0].to_board.signature, board.signature);
+
+                let mut path = vec![forward];
+                let mut signatures = AHashSet::from_iter([board.signature, after.signature]);
+                let mut tt = AHashMap::new();
+                let mut context = IdaContext::new(Instant::now(), None, 0, draw as u8);
+                let result = solver.search_with_bound(
+                    &after,
+                    1,
+                    100,
+                    &mut path,
+                    0,
+                    &mut signatures,
+                    &mut tt,
+                    &mut context,
+                );
+
+                assert!(matches!(result, IdaSearchResult::NextBound(i64::MAX)));
+                assert_eq!(context.checked_nodes, 1, "the cycle must not be explored");
+                assert!(tt.is_empty());
+                assert_eq!(path, vec![forward]);
+                assert_eq!(signatures.len(), 2);
+            }
+        }
+    }
+
     #[test]
     fn successors_prioritize_reveals_over_stock_and_foundation_transfers() {
         let mut board = KlondikeBoard::new();
