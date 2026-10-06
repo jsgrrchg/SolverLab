@@ -609,11 +609,11 @@ fn successor_order_key(
     from_board: &KlondikeBoard,
 ) -> (u8, std::cmp::Reverse<i64>) {
     // Lexicographic order: group first (move type), then local priority.
-    let exposed_delta = exposed_face_up_delta(transition, from_board);
-    let exposed_bonus = (exposed_delta.max(0) as i64) * weights::EXPOSED_BONUS_MULTIPLIER;
+    let revealed_delta = revealed_hidden_delta(transition, from_board);
+    let exposed_bonus = revealed_delta as i64 * weights::EXPOSED_BONUS_MULTIPLIER;
     let thoughtful_bonus = thoughtful_reveal_value(transition, from_board);
     let crit_bonus = critical_path_bonus(transition, from_board);
-    let bucket = successor_bucket(transition, from_board, exposed_delta);
+    let bucket = successor_bucket(transition, from_board, revealed_delta);
     let secondary = local_secondary_priority(
         transition,
         from_board,
@@ -625,10 +625,10 @@ fn successor_order_key(
 fn successor_bucket(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
-    exposed_delta: isize,
+    revealed_delta: isize,
 ) -> u8 {
     // Groups with lower indexes are explored first.
-    if exposed_delta > 0 {
+    if revealed_delta > 0 {
         return 0;
     }
     if is_safe_foundation_move(transition, from_board) {
@@ -659,10 +659,10 @@ fn local_secondary_priority(
 ) -> i64 {
     let m = &transition.the_move;
     if is_safe_foundation_move(transition, from_board) {
-        return weights::PRIORITY_SAFE_FOUNDATION;
+        return weights::PRIORITY_SAFE_FOUNDATION + exposed_bonus;
     }
     if m.is_to_foundation() {
-        return weights::PRIORITY_TO_FOUNDATION;
+        return weights::PRIORITY_TO_FOUNDATION + exposed_bonus;
     }
     if m.is_from_foundation() {
         return weights::PRIORITY_FROM_FOUNDATION;
@@ -684,19 +684,16 @@ fn local_secondary_priority(
     score
 }
 
-fn exposed_face_up_delta(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> isize {
-    let before_fu: isize = from_board
-        .columns
-        .iter()
-        .map(|c| c.num_face_up() as isize)
-        .sum();
-    let after_fu: isize = transition
-        .to_board
-        .columns
-        .iter()
-        .map(|c| c.num_face_up() as isize)
-        .sum();
-    after_fu - before_fu
+/// Counts newly revealed cards, excluding transfers into the tableau.
+fn revealed_hidden_delta(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> isize {
+    let source = match transition.the_move {
+        KlondikeMove::ColumnToColumn { source, .. }
+        | KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        _ => return 0,
+    };
+    let before = from_board.columns[source].face_down_len;
+    let after = transition.to_board.columns[source].face_down_len;
+    before.saturating_sub(after) as isize
 }
 
 fn thoughtful_reveal_value(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
@@ -822,4 +819,193 @@ pub fn deal(deck: &[crate::common::card::Card]) -> Option<KlondikeBoard> {
     // Re-exposes the board module deal function to keep a high-level
     // solver-centered API.
     super::board::deal(deck)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Card;
+
+    // Small legal move fixtures exercise ordering without running a full search.
+    fn card(suit: Suit, value: u8) -> Card {
+        Card::new(suit, value)
+    }
+
+    #[test]
+    fn successors_prioritize_reveals_over_stock_and_foundation_transfers() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Diamond, 9), true);
+        board.columns[0].push(card(Suit::Heart, 5), false);
+        board.columns[1].push(card(Suit::Club, 6), false);
+        board.columns[2].push(card(Suit::Spade, 5), false);
+        board.stock[0] = card(Suit::Diamond, 5);
+        board.stock[1] = card(Suit::Spade, 9);
+        board.stock_len = 2;
+        board.stock_index = 1;
+        board.compute_signature();
+
+        let foundation_reveal = KlondikeMove::ColumnToFoundation {
+            source: 0,
+            card: card(Suit::Heart, 5),
+        };
+        let column_reveal = KlondikeMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            count: 1,
+        };
+        let stock_transfer = KlondikeMove::StockPileToColumn {
+            destination: 1,
+            card: card(Suit::Diamond, 5),
+        };
+        let foundation_transfer = KlondikeMove::FoundationToColumn {
+            destination: 2,
+            card: card(Suit::Heart, 4),
+        };
+
+        for draw in [1, 3] {
+            let solver = KlondikeSolver::new(draw);
+            let transitions = solver.successors(&board, None, 0);
+            let position = |m| transitions.iter().position(|t| t.the_move == m).unwrap();
+            let advance = KlondikeMove::StockPileAdvance {
+                beginning_index: 1,
+                increment: draw as u8,
+            };
+
+            assert!(position(foundation_reveal) < position(advance));
+            assert!(position(column_reveal) < position(advance));
+            assert!(position(advance) < position(stock_transfer));
+            assert!(position(advance) < position(foundation_transfer));
+
+            for m in [foundation_reveal, column_reveal] {
+                assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 1);
+            }
+            for m in [stock_transfer, foundation_transfer, advance] {
+                assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 0);
+            }
+
+            // None of this fixture's candidates is pruned: ordering preserves them all.
+            let candidates = KlondikeMove::find_candidate_moves(&board, draw as u8);
+            assert_eq!(transitions.len(), candidates.len());
+            for m in candidates {
+                assert!(transitions.iter().any(|t| t.the_move == m));
+            }
+        }
+    }
+
+    #[test]
+    fn column_moves_without_hidden_cards_are_not_reveals() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 6), false);
+        board.columns[0].push(card(Suit::Heart, 5), false);
+        board.columns[1].push(card(Suit::Spade, 6), false);
+        board.compute_signature();
+
+        let transitions = KlondikeSolver::new(1).successors(&board, None, 0);
+        for m in [
+            KlondikeMove::ColumnToFoundation {
+                source: 0,
+                card: card(Suit::Heart, 5),
+            },
+            KlondikeMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                count: 1,
+            },
+        ] {
+            let transition = transitions.iter().find(|t| t.the_move == m).unwrap();
+            assert_eq!(revealed_hidden_delta(transition, &board), 0);
+            assert_ne!(successor_order_key(transition, &board).0, 0);
+        }
+    }
+
+    #[test]
+    fn foundation_moves_preserve_critical_path_priority_without_a_reveal() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Diamond as usize] = 4;
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Club, 6), false);
+        board.columns[0].push(card(Suit::Diamond, 5), false);
+        board.columns[1].push(card(Suit::Club, 1), true);
+        board.columns[1].push(card(Suit::Spade, 6), false);
+        board.columns[1].push(card(Suit::Heart, 5), false);
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            assert_eq!(transitions.len(), 2);
+            assert_eq!(
+                transitions[0].the_move,
+                KlondikeMove::ColumnToFoundation {
+                    source: 1,
+                    card: card(Suit::Heart, 5),
+                }
+            );
+            for transition in &transitions {
+                assert!(!is_safe_foundation_move(transition, &board));
+                assert_eq!(revealed_hidden_delta(transition, &board), 0);
+                assert_eq!(thoughtful_reveal_value(transition, &board), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn foundation_moves_prioritize_revealing_the_next_foundation_card() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Diamond as usize] = 4;
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Diamond, 5), false);
+        board.columns[1].push(card(Suit::Heart, 6), true);
+        board.columns[1].push(card(Suit::Heart, 5), false);
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            assert_eq!(transitions.len(), 2);
+            assert_eq!(
+                transitions[0].the_move,
+                KlondikeMove::ColumnToFoundation {
+                    source: 1,
+                    card: card(Suit::Heart, 5),
+                }
+            );
+            for transition in &transitions {
+                assert!(!is_safe_foundation_move(transition, &board));
+                assert_eq!(revealed_hidden_delta(transition, &board), 1);
+                assert_eq!(critical_path_bonus(transition, &board), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn safe_foundation_fast_path_preserves_its_order_and_candidates() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Spade, 1), false);
+        board.columns[1].push(card(Suit::Heart, 9), true);
+        board.columns[1].push(card(Suit::Club, 1), false);
+        board.stock[0] = card(Suit::Diamond, 13);
+        board.stock_len = 1;
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            let moves: Vec<_> = transitions.iter().map(|t| t.the_move).collect();
+            assert_eq!(
+                moves,
+                vec![
+                    KlondikeMove::ColumnToFoundation {
+                        source: 0,
+                        card: card(Suit::Spade, 1),
+                    },
+                    KlondikeMove::ColumnToFoundation {
+                        source: 1,
+                        card: card(Suit::Club, 1),
+                    },
+                ]
+            );
+        }
+    }
 }
