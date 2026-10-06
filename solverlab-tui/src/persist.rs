@@ -32,6 +32,7 @@ impl ConfigStore {
         ProjectDirs::from("com", "jfg", "solverlab").map(|dirs| dirs.config_dir().join(FILE_NAME))
     }
 
+    #[cfg(test)]
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }

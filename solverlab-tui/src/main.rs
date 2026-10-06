@@ -1,13 +1,12 @@
 mod app;
+mod cli;
 mod csv;
-// Seeds and config paths are wired up by the CLI.
-#[allow(dead_code)]
 mod deck;
 mod format;
 mod games;
+mod headless;
 mod input;
 mod model;
-#[allow(dead_code)]
 mod persist;
 mod runtime;
 mod ui;
@@ -20,23 +19,32 @@ use std::time::{Duration, Instant};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event};
 
+use clap::Parser;
+
 use app::App;
-use deck::ShuffleSource;
+use cli::Cli;
 use input::Flow;
-use persist::ConfigStore;
 use runtime::{GAME_THREAD_PREFIX, RunEvent};
 use ui::ViewState;
 
 /// Countdown/ETA refresh period (Swift: `runCountdown` sleeps 200 ms).
-const TICK: Duration = Duration::from_millis(200);
+pub(crate) const TICK: Duration = Duration::from_millis(200);
 const MAX_POLL: Duration = Duration::from_millis(100);
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    let store = ConfigStore::default_path().map_or_else(ConfigStore::disabled, ConfigStore::at);
+    let cli = Cli::parse();
+    let store = cli.config_store();
     let (tx, rx) = mpsc::channel();
-    let mut app = App::new(store.load(), ShuffleSource::Random, tx).with_store(store);
-    let mut view = ViewState::new(false);
+    let mut app = App::new(store.load(), cli.shuffle(), tx).with_store(store);
+    app.set_config(|config| cli.apply_overrides(config));
+
+    if cli.headless {
+        headless::run(&mut app, &rx, cli.csv.as_deref(), cli.quiet)?;
+        return Ok(());
+    }
+
+    let mut view = ViewState::new(cli.ascii);
 
     ratatui::run(|terminal| {
         silence_game_thread_panics();

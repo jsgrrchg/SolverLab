@@ -1887,6 +1887,7 @@ name = "solverlab-tui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "color-eyre",
  "directories",
  "rand 0.10.3",
