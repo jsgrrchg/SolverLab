@@ -1,13 +1,11 @@
 mod app;
-// CSV export, seeds and config paths are wired up by the export dialog and CLI.
-#[allow(dead_code)]
 mod csv;
+// Seeds and config paths are wired up by the CLI.
 #[allow(dead_code)]
 mod deck;
 mod format;
 mod games;
 mod input;
-#[allow(dead_code)]
 mod model;
 #[allow(dead_code)]
 mod persist;

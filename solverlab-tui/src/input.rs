@@ -3,8 +3,11 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use std::path::PathBuf;
+
 use crate::app::App;
-use crate::ui::controls::{can_clear, can_export};
+use crate::ui::controls::can_clear;
+use crate::ui::dialogs::ExportDialog;
 use crate::ui::{Focus, ViewState};
 
 const MAX_DIGITS: usize = 9;
@@ -36,6 +39,8 @@ pub enum Action {
     SortNext,
     SortPrev,
     ToggleHelp,
+    /// Key routed to the open export dialog.
+    Dialog(KeyCode),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +60,9 @@ pub fn map_key(key: KeyEvent, view: &ViewState) -> Option<Action> {
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Action::Quit);
+    }
+    if view.export.is_some() {
+        return Some(Action::Dialog(key.code));
     }
     if view.show_help {
         return matches!(
@@ -161,6 +169,85 @@ fn start_stop(app: &mut App) {
     }
 }
 
+fn open_export(app: &mut App, view: &mut ViewState) {
+    if app.all_results.is_empty() {
+        app.status_text = "No results to export".into();
+        return;
+    }
+    let dir = std::env::current_dir().unwrap_or_default();
+    let path = dir.join(app.default_export_file_name());
+    view.export = Some(ExportDialog::new(path.display().to_string()));
+}
+
+/// Expands a leading `~` to the home directory.
+fn expand_home(raw: &str) -> PathBuf {
+    let home = || directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+    if raw == "~" {
+        if let Some(home) = home() {
+            return home;
+        }
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\"))
+        && let Some(home) = home()
+    {
+        return home.join(rest);
+    }
+    PathBuf::from(raw)
+}
+
+fn dialog_key(code: KeyCode, app: &mut App, view: &mut ViewState) {
+    let Some(dialog) = view.export.as_mut() else {
+        return;
+    };
+    if dialog.confirm_overwrite {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => save_export(app, view),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                dialog.confirm_overwrite = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+    dialog.error = None;
+    match code {
+        KeyCode::Esc => view.export = None,
+        KeyCode::Enter => {
+            if dialog.path.value().trim().is_empty() {
+                return;
+            }
+            if expand_home(dialog.path.value()).exists() {
+                dialog.confirm_overwrite = true;
+            } else {
+                save_export(app, view);
+            }
+        }
+        KeyCode::Char(c) => dialog.path.insert(c),
+        KeyCode::Backspace => dialog.path.backspace(),
+        KeyCode::Delete => dialog.path.delete(),
+        KeyCode::Left => dialog.path.left(),
+        KeyCode::Right => dialog.path.right(),
+        KeyCode::Home => dialog.path.home(),
+        KeyCode::End => dialog.path.end(),
+        _ => {}
+    }
+}
+
+/// Writes the CSV; on failure the dialog stays open with the error so the
+/// path can be fixed.
+fn save_export(app: &mut App, view: &mut ViewState) {
+    let Some(dialog) = view.export.as_mut() else {
+        return;
+    };
+    let path = expand_home(dialog.path.value());
+    match app.export_csv(&path) {
+        Ok(()) => view.export = None,
+        Err(err) => {
+            dialog.confirm_overwrite = false;
+            dialog.error = Some(format!("Error exporting CSV: {err}"));
+        }
+    }
+}
+
 pub fn apply(action: Action, app: &mut App, view: &mut ViewState) -> Flow {
     if view.editing.is_some() && !is_edit(action) {
         commit_edit(app, view);
@@ -194,7 +281,8 @@ pub fn apply(action: Action, app: &mut App, view: &mut ViewState) -> Flow {
         Action::ToggleAuto if idle => app.set_config(|c| c.auto_parallel = !c.auto_parallel),
         Action::StartStop => start_stop(app),
         Action::Clear if can_clear(app) => app.clear_data(),
-        Action::Export if can_export(app) => {}
+        Action::Export => open_export(app, view),
+        Action::Dialog(code) => dialog_key(code, app, view),
         Action::EditChar(c) if field_editable(app, view.focus) => {
             let buffer = view.editing.get_or_insert_with(String::new);
             if buffer.len() < MAX_DIGITS {
@@ -405,6 +493,83 @@ mod tests {
         assert_eq!(view.sort_column, crate::ui::SortColumn::Moves);
         apply(Action::ToggleHelp, &mut app, &mut view);
         assert!(view.show_help);
+    }
+
+    #[test]
+    fn export_without_results_only_sets_status() {
+        let (mut app, _rx) = idle_app(SimConfig::default());
+        let mut view = view_at(Focus::Game);
+        type_keys(&mut app, &mut view, &[KeyCode::Char('e')]);
+        assert!(view.export.is_none());
+        assert_eq!(app.status_text, "No results to export");
+    }
+
+    #[test]
+    fn export_dialog_writes_and_confirms_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("results.csv");
+        let (mut app, _rx) = idle_app(SimConfig::default());
+        app.record(result(1, true, StopReason::Win));
+        let mut view = view_at(Focus::Game);
+
+        type_keys(&mut app, &mut view, &[KeyCode::Char('e')]);
+        let dialog = view.export.as_mut().unwrap();
+        assert!(dialog.path.value().ends_with(".csv"));
+        dialog.path = crate::ui::dialogs::TextInput::new(path.display().to_string());
+
+        // Keys go to the dialog, not to global shortcuts.
+        type_keys(
+            &mut app,
+            &mut view,
+            &[KeyCode::Char('s'), KeyCode::Backspace],
+        );
+        assert!(!app.is_running);
+        type_keys(&mut app, &mut view, &[KeyCode::Enter]);
+        assert!(view.export.is_none());
+        assert_eq!(app.status_text, "CSV exported: results.csv");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), app.csv());
+
+        // Second export to the same file asks before overwriting.
+        type_keys(&mut app, &mut view, &[KeyCode::Char('e')]);
+        view.export.as_mut().unwrap().path =
+            crate::ui::dialogs::TextInput::new(path.display().to_string());
+        type_keys(&mut app, &mut view, &[KeyCode::Enter]);
+        assert!(view.export.as_ref().unwrap().confirm_overwrite);
+        type_keys(&mut app, &mut view, &[KeyCode::Char('n')]);
+        assert!(!view.export.as_ref().unwrap().confirm_overwrite);
+        type_keys(&mut app, &mut view, &[KeyCode::Enter, KeyCode::Char('y')]);
+        assert!(view.export.is_none());
+    }
+
+    #[test]
+    fn export_dialog_keeps_open_on_error_and_esc_cancels() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, "").unwrap();
+        let (mut app, _rx) = idle_app(SimConfig::default());
+        app.record(result(1, true, StopReason::Win));
+        let mut view = view_at(Focus::Game);
+
+        type_keys(&mut app, &mut view, &[KeyCode::Char('e')]);
+        view.export.as_mut().unwrap().path =
+            crate::ui::dialogs::TextInput::new(blocker.join("x.csv").display().to_string());
+        type_keys(&mut app, &mut view, &[KeyCode::Enter]);
+        assert!(view.export.as_ref().unwrap().error.is_some());
+        assert_eq!(app.status_text, "Error exporting CSV");
+
+        type_keys(&mut app, &mut view, &[KeyCode::Esc]);
+        assert!(view.export.is_none());
+    }
+
+    #[test]
+    fn expand_home_handles_tilde() {
+        let home = directories::BaseDirs::new()
+            .unwrap()
+            .home_dir()
+            .to_path_buf();
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("~/a.csv"), home.join("a.csv"));
+        assert_eq!(expand_home("/tmp/a.csv"), PathBuf::from("/tmp/a.csv"));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! the app state plus view-only state (focus, sorting, scroll).
 
 pub mod controls;
+pub mod dialogs;
 mod help;
 mod metrics;
 mod progress;
@@ -153,6 +154,7 @@ pub struct ViewState {
     pub sort_column: SortColumn,
     pub table: TableState,
     pub show_help: bool,
+    pub export: Option<dialogs::ExportDialog>,
     pub glyphs: Glyphs,
 }
 
@@ -164,6 +166,7 @@ impl ViewState {
             sort_column: SortColumn::default(),
             table: TableState::default(),
             show_help: false,
+            export: None,
             glyphs: if ascii {
                 Glyphs::ASCII
             } else {
@@ -208,7 +211,9 @@ pub fn draw(frame: &mut Frame, app: &App, view: &mut ViewState) {
     table::render(frame, table_area, app, view);
     frame.render_widget(footer(), footer_area);
 
-    if view.show_help {
+    if let Some(dialog) = &view.export {
+        dialogs::render(frame, area, dialog);
+    } else if view.show_help {
         help::render(frame, area);
     }
 }

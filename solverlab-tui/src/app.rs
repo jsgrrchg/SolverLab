@@ -2,13 +2,16 @@
 //! countdown and ETA). The UI only reads it; input only calls its methods.
 
 use std::collections::VecDeque;
+use std::io;
+use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
+use crate::csv::{default_csv_file_name, make_csv};
 use crate::deck::ShuffleSource;
 use crate::format::format_duration;
 use crate::model::{SimConfig, SimResult, StopReason};
-use crate::persist::ConfigStore;
+use crate::persist::{ConfigStore, write_atomic};
 use crate::runtime::{
     ActiveGamesClock, RunEvent, RunHandle, auto_parallel_initial, cpu_count, spawn_simulation,
 };
@@ -145,6 +148,45 @@ impl App {
 
     pub fn estimated_remaining_display(&self) -> String {
         format_duration(self.estimated_remaining_total)
+    }
+
+    /// Default export file name, named after the last run's game (or the selected one).
+    pub fn default_export_file_name(&self) -> String {
+        let game = self
+            .last_run_config
+            .as_ref()
+            .map_or(self.config.game_type, |c| c.game_type);
+        default_csv_file_name(game, chrono::Local::now())
+    }
+
+    pub fn csv(&self) -> String {
+        make_csv(
+            &self.all_results,
+            &self.countdown_display(),
+            self.last_run_config.as_ref(),
+        )
+    }
+
+    /// Port of `exportCSV` once a destination is chosen.
+    pub fn export_csv(&mut self, path: &Path) -> io::Result<()> {
+        if self.all_results.is_empty() {
+            self.status_text = "No results to export".into();
+            return Ok(());
+        }
+        match write_atomic(path, self.csv().as_bytes()) {
+            Ok(()) => {
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                self.status_text = format!("CSV exported: {name}");
+                Ok(())
+            }
+            Err(err) => {
+                self.status_text = "Error exporting CSV".into();
+                Err(err)
+            }
+        }
     }
 
     pub fn start(&mut self) {
@@ -374,6 +416,59 @@ pub(crate) mod tests {
         app.set_config(|c| c.simulations = 1);
         assert_eq!(app.config.simulations, 1);
         assert!(app.status_text.starts_with("Config not saved"));
+    }
+
+    #[test]
+    fn export_csv_writes_make_csv_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.csv");
+        let (mut app, _rx) = idle_app(SimConfig::default());
+
+        app.export_csv(&path).unwrap();
+        assert_eq!(app.status_text, "No results to export");
+        assert!(!path.exists());
+
+        app.start();
+        app.record(result(1, true, StopReason::Win));
+        app.export_csv(&path).unwrap();
+        assert_eq!(app.status_text, "CSV exported: out.csv");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), app.csv());
+    }
+
+    #[test]
+    fn export_csv_reports_write_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, "").unwrap();
+        let (mut app, _rx) = idle_app(SimConfig::default());
+        app.record(result(1, true, StopReason::Win));
+        assert!(app.export_csv(&blocker.join("out.csv")).is_err());
+        assert_eq!(app.status_text, "Error exporting CSV");
+    }
+
+    #[test]
+    fn default_export_name_uses_last_run_game() {
+        use crate::model::GameType;
+        let (mut app, _rx) = idle_app(SimConfig {
+            game_type: GameType::FreeCell,
+            ..SimConfig::default()
+        });
+        assert!(
+            app.default_export_file_name()
+                .starts_with("FreeCell_results_")
+        );
+        app.start();
+        app.stop();
+        app.config.game_type = GameType::Pyramid;
+        assert!(
+            app.default_export_file_name()
+                .starts_with("FreeCell_results_")
+        );
+        app.clear_data();
+        assert!(
+            app.default_export_file_name()
+                .starts_with("Pyramid_results_")
+        );
     }
 
     #[test]
