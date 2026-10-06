@@ -1,0 +1,22 @@
+[package]
+name = "solverlab-tui"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Terminal console for SolverLab solitaire solver simulations"
+
+[[bin]]
+name = "solverlab-tui"
+path = "src/main.rs"
+
+[dependencies]
+solver_core = { path = "../solver-core-rs" }
+ratatui = "0.30"
+color-eyre = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# Keep unwinding (unlike the UniFFI build) so the terminal is always restored
+# and a panicking game can be recorded instead of killing the whole run.
