@@ -112,16 +112,16 @@ pub const EXPOSED_BONUS_MULTIPLIER: i64 = 300;
 /// No admissibility constraints: penalizes checkpoints that leave targets blocked.
 pub const PROGRESS_BURIAL_WEIGHT: i64 = 110;
 
-/// Thoughtful weight for deadlocks in progress_score.
-/// No admissibility constraints: penalizes checkpoints that keep active suit inversions.
+/// Weight of same-suit hidden dependencies in progress_score.
+/// Penalizes blocked lower ranks without treating them as proven deadlocks.
 pub const PROGRESS_DEADLOCK_WEIGHT: i64 = 160;
 
 /// Hidden-card threshold for enabling the near-autoplay bonus in progress_score.
-/// When hidden <= this value, an increasing quadratic bonus is applied.
+/// For hidden counts from zero through this value, an increasing quadratic bonus is applied.
 pub const AUTOPLAY_PROXIMITY_THRESHOLD: i64 = 7;
 
 /// Base weight of the near-autoplay bonus: proximity^2 * this value.
-/// States with few hidden cards are almost auto-won, so this is a strong incentive.
+/// Rewards uncovering cards; remaining stock can still prevent a win at hidden == 0.
 pub const PROGRESS_AUTOPLAY_PROXIMITY: i64 = 100;
 
 /// Secondary priority for safe foundation moves.
