@@ -121,6 +121,12 @@ impl KlondikeSolver {
             .iter()
             .any(|m| is_safe_move_pre_check(m, board))
         {
+            // Safe moves still cost one primitive step, including inside a chain.
+            if self.rules.iter().any(|rule| {
+                matches!(rule, KlondikeRule::DepthLimit { max_depth } if next_depth > *max_depth)
+            }) {
+                return Vec::new();
+            }
             let mut transitions = Vec::new();
             for the_move in &candidate_moves {
                 if !is_safe_move_pre_check(the_move, board) {
@@ -223,6 +229,33 @@ impl KlondikeSolver {
             loop {
                 if context.timeout_reached() {
                     break;
+                }
+
+                // The chunk root has no incoming move and is not charged as a node.
+                // The closure charges each primitive foundation move it performs.
+                if let Some(result) = self.try_finish_visible_without_stock(
+                    &current_board,
+                    0,
+                    bound,
+                    &[],
+                    &mut context,
+                ) {
+                    match result {
+                        IdaSearchResult::Found => {
+                            chunk_solution = context.solution_path.take();
+                            break;
+                        }
+                        IdaSearchResult::Timeout => break,
+                        IdaSearchResult::CheckpointTriggered => {
+                            triggered_checkpoint = true;
+                            break;
+                        }
+                        IdaSearchResult::NextBound(i64::MAX) => break,
+                        IdaSearchResult::NextBound(next_bound) => {
+                            bound = next_bound;
+                            continue;
+                        }
+                    }
                 }
 
                 // Restart the IDA* frontier: generate successors from the current root.
@@ -378,6 +411,79 @@ impl KlondikeSolver {
         }
     }
 
+    /// Finish a valid, fully visible tableau without stock or waste by legal
+    /// foundation moves. Return the exact required bound before building a tail.
+    fn try_finish_visible_without_stock(
+        &self,
+        board: &KlondikeBoard,
+        depth: usize,
+        bound: i64,
+        prefix: &[KlondikeMove],
+        context: &mut IdaContext,
+    ) -> Option<IdaSearchResult> {
+        if board.stock_len != 0 || board.columns.iter().any(|c| c.face_down_len != 0) {
+            return None;
+        }
+        if context.timeout_reached() {
+            return Some(IdaSearchResult::Timeout);
+        }
+
+        let max_depth = self
+            .rules
+            .iter()
+            .filter_map(|rule| match rule {
+                KlondikeRule::DepthLimit { max_depth } => Some(*max_depth),
+                _ => None,
+            })
+            .min()
+            .unwrap_or(usize::MAX);
+        let remaining = 52usize.saturating_sub(board.total_foundation_count());
+        let finish_depth = depth.saturating_add(remaining);
+        if finish_depth > max_depth {
+            return Some(IdaSearchResult::NextBound(i64::MAX));
+        }
+        if finish_depth as i64 > bound {
+            return Some(IdaSearchResult::NextBound(finish_depth as i64));
+        }
+
+        let mut current = *board;
+        let mut moves = prefix.to_vec();
+        while !Self::is_win(&current) {
+            if context.timeout_reached() {
+                return Some(IdaSearchResult::Timeout);
+            }
+            let next_move = (0..7).find_map(|source| {
+                let card = current.columns[source].top_face_up()?;
+                current
+                    .can_add_to_foundation(card)
+                    .then_some(KlondikeMove::ColumnToFoundation {
+                        source: source as u8,
+                        card,
+                    })
+            });
+            let Some(next_move) = next_move else {
+                return Some(IdaSearchResult::NextBound(i64::MAX));
+            };
+            let Some(next_board) = next_move.apply(current) else {
+                return Some(IdaSearchResult::NextBound(i64::MAX));
+            };
+            current = next_board;
+            moves.push(next_move);
+            context.consider_progress(&current, &moves);
+
+            // Same accounting order as recursion: charge the primitive child,
+            // check budgets, then recognize a win (including on the last move).
+            if context.should_timeout() {
+                return Some(IdaSearchResult::Timeout);
+            }
+            if context.should_checkpoint() {
+                return Some(IdaSearchResult::CheckpointTriggered);
+            }
+        }
+        context.solution_path = Some(moves);
+        Some(IdaSearchResult::Found)
+    }
+
     // ── Main IDA* recursion ─────────────
 
     fn search_with_bound(
@@ -391,91 +497,136 @@ impl KlondikeSolver {
         tt: &mut AHashMap<KlondikeTtKey, i64>,
         context: &mut IdaContext,
     ) -> IdaSearchResult {
-        if context.should_timeout() {
-            return IdaSearchResult::Timeout;
-        }
-        if context.should_checkpoint() {
-            return IdaSearchResult::CheckpointTriggered;
-        }
-
-        // Limit memory: clear the TT when it exceeds the configured threshold.
-        if tt.len() >= weights::TT_MAX_ENTRIES {
-            tt.clear();
-        }
-
-        let h_cost = BoardEval::from_board_fast(board, self.draw_advance).heuristic_cost();
-        let f_score = depth as i64 + h_cost;
-        // Typical IDA* pruning: the node exceeds the f = g + h bound.
-        if f_score > bound {
-            return IdaSearchResult::NextBound(f_score);
-        }
-
-        if Self::is_win(board) {
-            context.solution_path = Some(path.clone());
-            return IdaSearchResult::Found;
-        }
-
-        let prev_move = path.last().copied();
-        let transitions = self.successors(board, prev_move, depth);
-        let mut min_next_bound = i64::MAX;
-
-        for transition in transitions {
-            let next_board = transition.to_board;
-            let next_signature = next_board.signature;
-            let next_depth = depth + 1;
-            let next_remaining_budget = bound - next_depth as i64;
-            let next_undo_count = if transition.the_move.is_from_foundation() {
-                undo_count + 1
-            } else {
-                undo_count
-            };
-
-            if let Some(max) = self.max_undos {
-                if next_undo_count > max {
-                    continue;
-                }
+        let restore_path_len = path.len();
+        let mut chain_signatures = Vec::new();
+        let mut chain_board;
+        let mut board = board;
+        let mut depth = depth;
+        let result = 'nodes: loop {
+            if context.should_timeout() {
+                break IdaSearchResult::Timeout;
             }
-            // Avoid cycles in the current path (depth-first search).
-            if path_signatures.contains(&next_signature) {
+            if context.should_checkpoint() {
+                break IdaSearchResult::CheckpointTriggered;
+            }
+
+            // Limit memory: clear the TT when it exceeds the configured threshold.
+            if tt.len() >= weights::TT_MAX_ENTRIES {
+                tt.clear();
+            }
+
+            let h_cost = BoardEval::from_board_fast(board, self.draw_advance).heuristic_cost();
+            let f_score = depth as i64 + h_cost;
+            // Typical IDA* pruning: the node exceeds the f = g + h bound.
+            if f_score > bound {
+                break IdaSearchResult::NextBound(f_score);
+            }
+
+            if Self::is_win(board) {
+                context.solution_path = Some(path.clone());
+                break IdaSearchResult::Found;
+            }
+
+            if let Some(result) =
+                self.try_finish_visible_without_stock(board, depth, bound, path, context)
+            {
+                break result;
+            }
+
+            let prev_move = path.last().copied();
+            let mut transitions = self.successors(board, prev_move, depth);
+            if transitions.len() == 1 && is_safe_foundation_move(&transitions[0], board) {
+                let transition = transitions.pop().unwrap();
+                let next_signature = transition.to_board.signature;
+                let next_depth = depth + 1;
+                let next_remaining_budget = bound - next_depth as i64;
+                // A safe foundation step never consumes an undo. Check every
+                // intermediate signature and TT entry before extending the path.
+                let key = self.tt_key(next_signature, undo_count);
+                if path_signatures.contains(&next_signature)
+                    || Self::should_prune_by_tt(tt, key, next_remaining_budget)
+                {
+                    break IdaSearchResult::NextBound(i64::MAX);
+                }
+                Self::upsert_remaining_budget(tt, key, next_remaining_budget);
+                path_signatures.insert(next_signature);
+                chain_signatures.push(next_signature);
+                path.push(transition.the_move);
+                context.consider_progress(&transition.to_board, path);
+                chain_board = transition.to_board;
+                board = &chain_board;
+                depth = next_depth;
+                // The next iteration charges this primitive node exactly once and
+                // checks its f-score, timeout, checkpoint and victory before expansion.
                 continue;
             }
+            let mut min_next_bound = i64::MAX;
 
-            let next_tt_key = self.tt_key(next_signature, next_undo_count);
-            if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
-                continue;
-            }
+            for transition in transitions {
+                let next_board = transition.to_board;
+                let next_signature = next_board.signature;
+                let next_depth = depth + 1;
+                let next_remaining_budget = bound - next_depth as i64;
+                let next_undo_count = if transition.the_move.is_from_foundation() {
+                    undo_count + 1
+                } else {
+                    undo_count
+                };
 
-            Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
-            path_signatures.insert(next_signature);
-            path.push(transition.the_move);
-            context.consider_progress(&next_board, path);
-
-            match self.search_with_bound(
-                &next_board,
-                next_depth,
-                bound,
-                path,
-                next_undo_count,
-                path_signatures,
-                tt,
-                context,
-            ) {
-                IdaSearchResult::Found => return IdaSearchResult::Found,
-                IdaSearchResult::Timeout => return IdaSearchResult::Timeout,
-                IdaSearchResult::CheckpointTriggered => {
-                    return IdaSearchResult::CheckpointTriggered
-                }
-                IdaSearchResult::NextBound(nb) => {
-                    if nb < min_next_bound {
-                        min_next_bound = nb;
+                if let Some(max) = self.max_undos {
+                    if next_undo_count > max {
+                        continue;
                     }
                 }
-            }
+                // Avoid cycles in the current path (depth-first search).
+                if path_signatures.contains(&next_signature) {
+                    continue;
+                }
 
-            path.pop();
-            path_signatures.remove(&next_signature);
+                let next_tt_key = self.tt_key(next_signature, next_undo_count);
+                if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
+                    continue;
+                }
+
+                Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
+                path_signatures.insert(next_signature);
+                path.push(transition.the_move);
+                context.consider_progress(&next_board, path);
+
+                match self.search_with_bound(
+                    &next_board,
+                    next_depth,
+                    bound,
+                    path,
+                    next_undo_count,
+                    path_signatures,
+                    tt,
+                    context,
+                ) {
+                    IdaSearchResult::Found => break 'nodes IdaSearchResult::Found,
+                    IdaSearchResult::Timeout => break 'nodes IdaSearchResult::Timeout,
+                    IdaSearchResult::CheckpointTriggered => {
+                        break 'nodes IdaSearchResult::CheckpointTriggered
+                    }
+                    IdaSearchResult::NextBound(nb) => {
+                        if nb < min_next_bound {
+                            min_next_bound = nb;
+                        }
+                    }
+                }
+
+                path.pop();
+                path_signatures.remove(&next_signature);
+            }
+            break IdaSearchResult::NextBound(min_next_bound);
+        };
+        if matches!(result, IdaSearchResult::NextBound(_)) {
+            path.truncate(restore_path_len);
+            for signature in chain_signatures {
+                path_signatures.remove(&signature);
+            }
         }
-        IdaSearchResult::NextBound(min_next_bound)
+        result
     }
 }
 
@@ -483,6 +634,7 @@ impl KlondikeSolver {
 // IDA* result and context
 // ═══════════════════════════════════════════
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum IdaSearchResult {
     Found,
     NextBound(i64),
@@ -822,6 +974,10 @@ pub fn deal(deck: &[crate::common::card::Card]) -> Option<KlondikeBoard> {
 }
 
 #[cfg(test)]
+#[path = "solver_optimizations_tests.rs"]
+mod optimizations_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::card::Card;
@@ -972,6 +1128,10 @@ mod tests {
         board.columns[0].push(card(Suit::Club, 8), false);
         board.columns[0].push(card(Suit::Heart, 7), false);
         board.columns[1].push(card(Suit::Spade, 8), false);
+        // Keep this fixture out of the fully visible endgame closure so it
+        // continues to exercise the recursive path-signature cycle check.
+        board.columns[6].push(card(Suit::Diamond, 9), true);
+        board.columns[6].push(card(Suit::Spade, 10), false);
         board.compute_signature();
         let forward = KlondikeMove::ColumnToColumn {
             source: 0,

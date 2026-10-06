@@ -34,9 +34,10 @@ pub enum KlondikeMove {
 }
 
 impl KlondikeMove {
-    // Generates all valid primitive moves.
+    // Generates legal primitive moves, using one representative empty destination.
     pub fn find_candidate_moves(board: &KlondikeBoard, draw_advance: u8) -> Vec<KlondikeMove> {
         let mut moves = Vec::with_capacity(32);
+        let first_empty = board.columns.iter().position(|column| column.len == 0);
 
         // 1. Column to foundation.
         for c in 0..7 {
@@ -77,6 +78,9 @@ impl KlondikeMove {
                     if src == dest {
                         continue;
                     }
+                    if board.columns[dest].len == 0 && Some(dest) != first_empty {
+                        continue;
+                    }
                     if board.columns[dest].can_add_run(run_base) {
                         moves.push(KlondikeMove::ColumnToColumn {
                             source: src as u8,
@@ -91,6 +95,9 @@ impl KlondikeMove {
         // 4. Stock to column.
         if let Some(card) = board.stock_pile_card() {
             for dest in 0..7 {
+                if board.columns[dest].len == 0 && Some(dest) != first_empty {
+                    continue;
+                }
                 if board.columns[dest].can_add_run(card) {
                     moves.push(KlondikeMove::StockPileToColumn {
                         destination: dest as u8,
@@ -104,6 +111,9 @@ impl KlondikeMove {
         for &suit in crate::common::card::Suit::ALL.iter() {
             if let Some(card) = board.top_of_foundation(suit) {
                 for dest in 0..7 {
+                    if board.columns[dest].len == 0 && Some(dest) != first_empty {
+                        continue;
+                    }
                     if board.columns[dest].can_add_run(card) {
                         moves.push(KlondikeMove::FoundationToColumn {
                             destination: dest as u8,
@@ -289,4 +299,106 @@ pub fn find_stock_to_foundation_moves(board: &KlondikeBoard) -> Vec<KlondikeMove
         }
     }
     vec![]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Suit;
+
+    #[test]
+    fn kings_use_one_empty_destination_from_tableau_stock_and_foundation() {
+        for empty_columns in [vec![1, 4], vec![4], vec![]] {
+            let mut board = KlondikeBoard::new();
+            board.columns[0].push(Card::new(Suit::Diamond, 2), true);
+            board.columns[0].push(Card::new(Suit::Heart, 13), false);
+            for column in 1..7 {
+                if !empty_columns.contains(&column) {
+                    board.columns[column].push(Card::new(Suit::Spade, 6 + column as u8), false);
+                }
+            }
+            board.stock[0] = Card::new(Suit::Diamond, 13);
+            board.stock_len = 1;
+            board.stock_index = 1;
+            board.foundation[Suit::Club as usize] = 13;
+            board.compute_signature();
+            for draw in [1, 3] {
+                let moves = KlondikeMove::find_candidate_moves(&board, draw);
+                for origin in 0..3 {
+                    let destinations: Vec<_> = moves
+                        .iter()
+                        .filter_map(|m| match (origin, m) {
+                            (
+                                0,
+                                KlondikeMove::ColumnToColumn {
+                                    source: 0,
+                                    destination,
+                                    count: 1,
+                                },
+                            )
+                            | (1, KlondikeMove::StockPileToColumn { destination, .. })
+                            | (2, KlondikeMove::FoundationToColumn { destination, .. }) => {
+                                Some(*destination as usize)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(
+                        destinations,
+                        empty_columns
+                            .first()
+                            .copied()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                    );
+                }
+                if let Some(&destination) = empty_columns.first() {
+                    let m = KlondikeMove::ColumnToColumn {
+                        source: 0,
+                        destination: destination as u8,
+                        count: 1,
+                    };
+                    assert_eq!(m.apply(board).unwrap().columns[0].face_down_len, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nonempty_destinations_keep_all_legal_tableau_stock_and_foundation_moves() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(Card::new(Suit::Heart, 7), false);
+        for (column, suit, rank) in [
+            (1, Suit::Club, 8),
+            (2, Suit::Spade, 8),
+            (3, Suit::Club, 7),
+            (4, Suit::Spade, 7),
+        ] {
+            board.columns[column].push(Card::new(suit, rank), false);
+        }
+        board.stock[0] = Card::new(Suit::Diamond, 7);
+        board.stock_len = 1;
+        board.stock_index = 1;
+        board.foundation[Suit::Heart as usize] = 6;
+        for draw in [1, 3] {
+            let moves = KlondikeMove::find_candidate_moves(&board, draw);
+            for destination in [1, 2] {
+                assert!(moves.contains(&KlondikeMove::ColumnToColumn {
+                    source: 0,
+                    destination,
+                    count: 1
+                }));
+                assert!(moves.contains(&KlondikeMove::StockPileToColumn {
+                    destination,
+                    card: Card::new(Suit::Diamond, 7)
+                }));
+            }
+            for destination in [3, 4] {
+                assert!(moves.contains(&KlondikeMove::FoundationToColumn {
+                    destination,
+                    card: Card::new(Suit::Heart, 6)
+                }));
+            }
+        }
+    }
 }
