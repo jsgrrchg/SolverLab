@@ -121,6 +121,12 @@ impl KlondikeSolver {
             .iter()
             .any(|m| is_safe_move_pre_check(m, board))
         {
+            // Safe moves still cost one primitive step, including inside a chain.
+            if self.rules.iter().any(|rule| {
+                matches!(rule, KlondikeRule::DepthLimit { max_depth } if next_depth > *max_depth)
+            }) {
+                return Vec::new();
+            }
             let mut transitions = Vec::new();
             for the_move in &candidate_moves {
                 if !is_safe_move_pre_check(the_move, board) {
@@ -202,6 +208,7 @@ impl KlondikeSolver {
         current_board.compute_signature();
         let eval = BoardEval::from_board(&current_board, self.draw_advance);
         let mut context = IdaContext::new(start, timeout, eval.progress_score(), self.draw_advance);
+        context.allow_partial = allow_partial;
 
         loop {
             if context.timeout_reached() {
@@ -223,6 +230,33 @@ impl KlondikeSolver {
             loop {
                 if context.timeout_reached() {
                     break;
+                }
+
+                // The chunk root has no incoming move and is not charged as a node.
+                // The closure charges each primitive foundation move it performs.
+                if let Some(result) = self.try_finish_visible_without_stock(
+                    &current_board,
+                    0,
+                    bound,
+                    &[],
+                    &mut context,
+                ) {
+                    match result {
+                        IdaSearchResult::Found => {
+                            chunk_solution = context.solution_path.take();
+                            break;
+                        }
+                        IdaSearchResult::Timeout => break,
+                        IdaSearchResult::CheckpointTriggered => {
+                            triggered_checkpoint = true;
+                            break;
+                        }
+                        IdaSearchResult::NextBound(i64::MAX) => break,
+                        IdaSearchResult::NextBound(next_bound) => {
+                            bound = next_bound;
+                            continue;
+                        }
+                    }
                 }
 
                 // Restart the IDA* frontier: generate successors from the current root.
@@ -378,6 +412,92 @@ impl KlondikeSolver {
         }
     }
 
+    /// Finish a valid, fully visible tableau without stock or waste by legal
+    /// foundation moves. Bound the tail by the depth limit when partial results
+    /// are allowed, retaining its final progress even between sampling points.
+    fn try_finish_visible_without_stock(
+        &self,
+        board: &KlondikeBoard,
+        depth: usize,
+        bound: i64,
+        prefix: &[KlondikeMove],
+        context: &mut IdaContext,
+    ) -> Option<IdaSearchResult> {
+        if board.stock_len != 0 || board.columns.iter().any(|c| c.face_down_len != 0) {
+            return None;
+        }
+        if context.timeout_reached() {
+            return Some(IdaSearchResult::Timeout);
+        }
+
+        let max_depth = self
+            .rules
+            .iter()
+            .filter_map(|rule| match rule {
+                KlondikeRule::DepthLimit { max_depth } => Some(*max_depth),
+                _ => None,
+            })
+            .min()
+            .unwrap_or(usize::MAX);
+        let remaining = 52usize.saturating_sub(board.total_foundation_count());
+        let finish_depth = depth.saturating_add(remaining);
+        if finish_depth > max_depth && !context.allow_partial {
+            return Some(IdaSearchResult::NextBound(i64::MAX));
+        }
+        let target_depth = finish_depth.min(max_depth);
+        if target_depth as i64 > bound {
+            return Some(IdaSearchResult::NextBound(target_depth as i64));
+        }
+
+        let mut current = *board;
+        let mut current_depth = depth;
+        let mut moves = prefix.to_vec();
+        let result = loop {
+            if Self::is_win(&current) {
+                context.solution_path = Some(moves);
+                return Some(IdaSearchResult::Found);
+            }
+            if current_depth >= max_depth {
+                break IdaSearchResult::NextBound(i64::MAX);
+            }
+            if context.timeout_reached() {
+                break IdaSearchResult::Timeout;
+            }
+            let next_move = (0..7).find_map(|source| {
+                let card = current.columns[source].top_face_up()?;
+                current
+                    .can_add_to_foundation(card)
+                    .then_some(KlondikeMove::ColumnToFoundation {
+                        source: source as u8,
+                        card,
+                    })
+            });
+            let Some(next_move) = next_move else {
+                break IdaSearchResult::NextBound(i64::MAX);
+            };
+            let Some(next_board) = next_move.apply(current) else {
+                break IdaSearchResult::NextBound(i64::MAX);
+            };
+            current = next_board;
+            current_depth += 1;
+            moves.push(next_move);
+            context.consider_progress(&current, &moves);
+
+            // Same accounting order as recursion: charge the primitive child,
+            // check budgets, then recognize a win (including on the last move).
+            if context.should_timeout() {
+                break IdaSearchResult::Timeout;
+            }
+            if context.should_checkpoint() {
+                break IdaSearchResult::CheckpointTriggered;
+            }
+        };
+        if context.allow_partial && !moves.is_empty() {
+            context.record_progress(&current, &moves);
+        }
+        Some(result)
+    }
+
     // ── Main IDA* recursion ─────────────
 
     fn search_with_bound(
@@ -391,91 +511,136 @@ impl KlondikeSolver {
         tt: &mut AHashMap<KlondikeTtKey, i64>,
         context: &mut IdaContext,
     ) -> IdaSearchResult {
-        if context.should_timeout() {
-            return IdaSearchResult::Timeout;
-        }
-        if context.should_checkpoint() {
-            return IdaSearchResult::CheckpointTriggered;
-        }
-
-        // Limit memory: clear the TT when it exceeds the configured threshold.
-        if tt.len() >= weights::TT_MAX_ENTRIES {
-            tt.clear();
-        }
-
-        let h_cost = BoardEval::from_board_fast(board, self.draw_advance).heuristic_cost();
-        let f_score = depth as i64 + h_cost;
-        // Typical IDA* pruning: the node exceeds the f = g + h bound.
-        if f_score > bound {
-            return IdaSearchResult::NextBound(f_score);
-        }
-
-        if Self::is_win(board) {
-            context.solution_path = Some(path.clone());
-            return IdaSearchResult::Found;
-        }
-
-        let prev_move = path.last().copied();
-        let transitions = self.successors(board, prev_move, depth);
-        let mut min_next_bound = i64::MAX;
-
-        for transition in transitions {
-            let next_board = transition.to_board;
-            let next_signature = next_board.signature;
-            let next_depth = depth + 1;
-            let next_remaining_budget = bound - next_depth as i64;
-            let next_undo_count = if transition.the_move.is_from_foundation() {
-                undo_count + 1
-            } else {
-                undo_count
-            };
-
-            if let Some(max) = self.max_undos {
-                if next_undo_count > max {
-                    continue;
-                }
+        let restore_path_len = path.len();
+        let mut chain_signatures = Vec::new();
+        let mut chain_board;
+        let mut board = board;
+        let mut depth = depth;
+        let result = 'nodes: loop {
+            if context.should_timeout() {
+                break IdaSearchResult::Timeout;
             }
-            // Avoid cycles in the current path (depth-first search).
-            if path_signatures.contains(&next_signature) {
+            if context.should_checkpoint() {
+                break IdaSearchResult::CheckpointTriggered;
+            }
+
+            // Limit memory: clear the TT when it exceeds the configured threshold.
+            if tt.len() >= weights::TT_MAX_ENTRIES {
+                tt.clear();
+            }
+
+            let h_cost = BoardEval::from_board_fast(board, self.draw_advance).heuristic_cost();
+            let f_score = depth as i64 + h_cost;
+            // Typical IDA* pruning: the node exceeds the f = g + h bound.
+            if f_score > bound {
+                break IdaSearchResult::NextBound(f_score);
+            }
+
+            if Self::is_win(board) {
+                context.solution_path = Some(path.clone());
+                break IdaSearchResult::Found;
+            }
+
+            if let Some(result) =
+                self.try_finish_visible_without_stock(board, depth, bound, path, context)
+            {
+                break result;
+            }
+
+            let prev_move = path.last().copied();
+            let mut transitions = self.successors(board, prev_move, depth);
+            if transitions.len() == 1 && is_safe_foundation_move(&transitions[0], board) {
+                let transition = transitions.pop().unwrap();
+                let next_signature = transition.to_board.signature;
+                let next_depth = depth + 1;
+                let next_remaining_budget = bound - next_depth as i64;
+                // A safe foundation step never consumes an undo. Check every
+                // intermediate signature and TT entry before extending the path.
+                let key = self.tt_key(next_signature, undo_count);
+                if path_signatures.contains(&next_signature)
+                    || Self::should_prune_by_tt(tt, key, next_remaining_budget)
+                {
+                    break IdaSearchResult::NextBound(i64::MAX);
+                }
+                Self::upsert_remaining_budget(tt, key, next_remaining_budget);
+                path_signatures.insert(next_signature);
+                chain_signatures.push(next_signature);
+                path.push(transition.the_move);
+                context.consider_progress(&transition.to_board, path);
+                chain_board = transition.to_board;
+                board = &chain_board;
+                depth = next_depth;
+                // The next iteration charges this primitive node exactly once and
+                // checks its f-score, timeout, checkpoint and victory before expansion.
                 continue;
             }
+            let mut min_next_bound = i64::MAX;
 
-            let next_tt_key = self.tt_key(next_signature, next_undo_count);
-            if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
-                continue;
-            }
+            for transition in transitions {
+                let next_board = transition.to_board;
+                let next_signature = next_board.signature;
+                let next_depth = depth + 1;
+                let next_remaining_budget = bound - next_depth as i64;
+                let next_undo_count = if transition.the_move.is_from_foundation() {
+                    undo_count + 1
+                } else {
+                    undo_count
+                };
 
-            Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
-            path_signatures.insert(next_signature);
-            path.push(transition.the_move);
-            context.consider_progress(&next_board, path);
-
-            match self.search_with_bound(
-                &next_board,
-                next_depth,
-                bound,
-                path,
-                next_undo_count,
-                path_signatures,
-                tt,
-                context,
-            ) {
-                IdaSearchResult::Found => return IdaSearchResult::Found,
-                IdaSearchResult::Timeout => return IdaSearchResult::Timeout,
-                IdaSearchResult::CheckpointTriggered => {
-                    return IdaSearchResult::CheckpointTriggered
-                }
-                IdaSearchResult::NextBound(nb) => {
-                    if nb < min_next_bound {
-                        min_next_bound = nb;
+                if let Some(max) = self.max_undos {
+                    if next_undo_count > max {
+                        continue;
                     }
                 }
-            }
+                // Avoid cycles in the current path (depth-first search).
+                if path_signatures.contains(&next_signature) {
+                    continue;
+                }
 
-            path.pop();
-            path_signatures.remove(&next_signature);
+                let next_tt_key = self.tt_key(next_signature, next_undo_count);
+                if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
+                    continue;
+                }
+
+                Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
+                path_signatures.insert(next_signature);
+                path.push(transition.the_move);
+                context.consider_progress(&next_board, path);
+
+                match self.search_with_bound(
+                    &next_board,
+                    next_depth,
+                    bound,
+                    path,
+                    next_undo_count,
+                    path_signatures,
+                    tt,
+                    context,
+                ) {
+                    IdaSearchResult::Found => break 'nodes IdaSearchResult::Found,
+                    IdaSearchResult::Timeout => break 'nodes IdaSearchResult::Timeout,
+                    IdaSearchResult::CheckpointTriggered => {
+                        break 'nodes IdaSearchResult::CheckpointTriggered
+                    }
+                    IdaSearchResult::NextBound(nb) => {
+                        if nb < min_next_bound {
+                            min_next_bound = nb;
+                        }
+                    }
+                }
+
+                path.pop();
+                path_signatures.remove(&next_signature);
+            }
+            break IdaSearchResult::NextBound(min_next_bound);
+        };
+        if matches!(result, IdaSearchResult::NextBound(_)) {
+            path.truncate(restore_path_len);
+            for signature in chain_signatures {
+                path_signatures.remove(&signature);
+            }
         }
-        IdaSearchResult::NextBound(min_next_bound)
+        result
     }
 }
 
@@ -483,6 +648,7 @@ impl KlondikeSolver {
 // IDA* result and context
 // ═══════════════════════════════════════════
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum IdaSearchResult {
     Found,
     NextBound(i64),
@@ -495,6 +661,7 @@ pub struct IdaContext {
     timeout: Option<Duration>,
     checked_nodes: u64,
     progress_sample_counter: u64,
+    allow_partial: bool,
     pub best_progress: i64,
     pub best_progress_path: Vec<KlondikeMove>,
     pub solution_path: Option<Vec<KlondikeMove>>,
@@ -518,6 +685,7 @@ impl IdaContext {
             timeout,
             checked_nodes: 0,
             progress_sample_counter: 0,
+            allow_partial: false,
             checkpoint_nodes: 0,
             checkpoint_node_limit: weights::CHECKPOINT_FALLBACK_LIMIT,
             best_progress: initial_progress,
@@ -571,7 +739,11 @@ impl IdaContext {
         if self.progress_sample_counter & 3 != 0 {
             return;
         }
+        self.record_progress(board, path);
+    }
 
+    // Terminal partial paths must not depend on the four-node sampling phase.
+    fn record_progress(&mut self, board: &KlondikeBoard, path: &[KlondikeMove]) {
         let score = BoardEval::from_board(board, self.draw_advance).progress_score();
 
         if score > self.best_progress {
@@ -609,11 +781,11 @@ fn successor_order_key(
     from_board: &KlondikeBoard,
 ) -> (u8, std::cmp::Reverse<i64>) {
     // Lexicographic order: group first (move type), then local priority.
-    let exposed_delta = exposed_face_up_delta(transition, from_board);
-    let exposed_bonus = (exposed_delta.max(0) as i64) * weights::EXPOSED_BONUS_MULTIPLIER;
+    let revealed_delta = revealed_hidden_delta(transition, from_board);
+    let exposed_bonus = revealed_delta as i64 * weights::EXPOSED_BONUS_MULTIPLIER;
     let thoughtful_bonus = thoughtful_reveal_value(transition, from_board);
     let crit_bonus = critical_path_bonus(transition, from_board);
-    let bucket = successor_bucket(transition, from_board, exposed_delta);
+    let bucket = successor_bucket(transition, from_board, revealed_delta);
     let secondary = local_secondary_priority(
         transition,
         from_board,
@@ -625,10 +797,10 @@ fn successor_order_key(
 fn successor_bucket(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
-    exposed_delta: isize,
+    revealed_delta: isize,
 ) -> u8 {
     // Groups with lower indexes are explored first.
-    if exposed_delta > 0 {
+    if revealed_delta > 0 {
         return 0;
     }
     if is_safe_foundation_move(transition, from_board) {
@@ -659,10 +831,10 @@ fn local_secondary_priority(
 ) -> i64 {
     let m = &transition.the_move;
     if is_safe_foundation_move(transition, from_board) {
-        return weights::PRIORITY_SAFE_FOUNDATION;
+        return weights::PRIORITY_SAFE_FOUNDATION + exposed_bonus;
     }
     if m.is_to_foundation() {
-        return weights::PRIORITY_TO_FOUNDATION;
+        return weights::PRIORITY_TO_FOUNDATION + exposed_bonus;
     }
     if m.is_from_foundation() {
         return weights::PRIORITY_FROM_FOUNDATION;
@@ -684,19 +856,16 @@ fn local_secondary_priority(
     score
 }
 
-fn exposed_face_up_delta(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> isize {
-    let before_fu: isize = from_board
-        .columns
-        .iter()
-        .map(|c| c.num_face_up() as isize)
-        .sum();
-    let after_fu: isize = transition
-        .to_board
-        .columns
-        .iter()
-        .map(|c| c.num_face_up() as isize)
-        .sum();
-    after_fu - before_fu
+/// Counts newly revealed cards, excluding transfers into the tableau.
+fn revealed_hidden_delta(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> isize {
+    let source = match transition.the_move {
+        KlondikeMove::ColumnToColumn { source, .. }
+        | KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        _ => return 0,
+    };
+    let before = from_board.columns[source].face_down_len;
+    let after = transition.to_board.columns[source].face_down_len;
+    before.saturating_sub(after) as isize
 }
 
 fn thoughtful_reveal_value(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
@@ -822,4 +991,387 @@ pub fn deal(deck: &[crate::common::card::Card]) -> Option<KlondikeBoard> {
     // Re-exposes the board module deal function to keep a high-level
     // solver-centered API.
     super::board::deal(deck)
+}
+
+#[cfg(test)]
+#[path = "solver_optimizations_tests.rs"]
+mod optimizations_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::card::Card;
+
+    // Small legal move fixtures exercise ordering without running a full search.
+    fn card(suit: Suit, value: u8) -> Card {
+        Card::new(suit, value)
+    }
+
+    // Complete the inverse-move fixtures with all 52 cards. Low foundations and
+    // a King atop column 6 avoid introducing forced safe foundation moves.
+    fn complete_inverse_fixture(board: &mut KlondikeBoard) {
+        for rank in &mut board.foundation {
+            *rank = (*rank).max(4);
+        }
+        let remaining: Vec<_> = Card::standard_deck()
+            .into_iter()
+            .filter(|card| {
+                card.value > board.foundation[card.suit as usize]
+                    && !board
+                        .columns
+                        .iter()
+                        .any(|column| column.cards[..column.len as usize].contains(card))
+            })
+            .collect();
+        board.stock[..24].copy_from_slice(&remaining[..24]);
+        board.stock_len = 24;
+        for (index, &card) in remaining[24..].iter().enumerate() {
+            board.columns[6].push(card, index + 25 < remaining.len());
+        }
+        board.compute_signature();
+        assert_full_deck(board);
+    }
+
+    fn assert_full_deck(board: &KlondikeBoard) {
+        let mut cards = board.stock[..board.stock_len as usize].to_vec();
+        for column in &board.columns {
+            cards.extend_from_slice(&column.cards[..column.len as usize]);
+        }
+        for suit in Suit::ALL {
+            cards.extend((1..=board.foundation[suit as usize]).map(|rank| card(suit, rank)));
+        }
+        cards.sort_by_key(|card| card.encode());
+        assert_eq!(cards, Card::standard_deck());
+    }
+
+    #[test]
+    fn immediate_column_inverse_preserves_a_reveal_for_single_cards_and_runs() {
+        for count in [1, 2] {
+            let mut board = KlondikeBoard::new();
+            board.columns[0].push(card(Suit::Diamond, 9), true);
+            board.columns[0].push(card(Suit::Club, 8), true);
+            board.columns[0].push(card(Suit::Heart, 7), false);
+            if count == 2 {
+                board.columns[0].push(card(Suit::Club, 6), false);
+            }
+            board.columns[1].push(card(Suit::Spade, 8), false);
+            complete_inverse_fixture(&mut board);
+
+            let forward = KlondikeMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                count,
+            };
+            let inverse = KlondikeMove::ColumnToColumn {
+                source: 1,
+                destination: 0,
+                count,
+            };
+            for draw in [1, 3] {
+                for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                    let solver = KlondikeSolver::new_with_mode(draw, mode);
+                    let after = solver
+                        .successors(&board, None, 0)
+                        .into_iter()
+                        .find(|t| t.the_move == forward)
+                        .expect("the reveal must be a legal successor")
+                        .to_board;
+                    assert_full_deck(&after);
+                    assert_eq!(after.columns[0].face_down_len, 1);
+                    let restored = solver
+                        .successors(&after, Some(forward), 1)
+                        .into_iter()
+                        .find(|t| t.the_move == inverse)
+                        .expect("returning the run must preserve the reveal")
+                        .to_board;
+                    assert_full_deck(&restored);
+                    assert_eq!(restored.columns[0].face_down_len, 1);
+                    assert_eq!(restored.columns[0].len, board.columns[0].len);
+                    assert_eq!(restored.columns[1].len, board.columns[1].len);
+                    assert_ne!(restored.signature, board.signature);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immediate_foundation_inverse_preserves_a_reveal_or_returns_an_ancestor() {
+        for hidden in [false, true] {
+            let mut board = KlondikeBoard::new();
+            board.foundation[Suit::Heart as usize] = 6;
+            board.columns[0].push(card(Suit::Club, 8), hidden);
+            board.columns[0].push(card(Suit::Heart, 7), false);
+            complete_inverse_fixture(&mut board);
+            let forward = KlondikeMove::ColumnToFoundation {
+                source: 0,
+                card: card(Suit::Heart, 7),
+            };
+            let inverse = KlondikeMove::FoundationToColumn {
+                destination: 0,
+                card: card(Suit::Heart, 7),
+            };
+            // The opposite-color foundations lag behind: this is not a forced safe move.
+            assert!(!is_safe_move_pre_check(&forward, &board));
+            for draw in [1, 3] {
+                for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                    let solver = KlondikeSolver::new_with_mode(draw, mode);
+                    let after = solver
+                        .successors(&board, None, 0)
+                        .into_iter()
+                        .find(|t| t.the_move == forward)
+                        .expect("the non-safe foundation move must be available")
+                        .to_board;
+                    assert_full_deck(&after);
+                    let restored = solver
+                        .successors(&after, Some(forward), 1)
+                        .into_iter()
+                        .find(|t| t.the_move == inverse)
+                        .expect("one face-up card may be the result of a reveal")
+                        .to_board;
+                    assert_full_deck(&restored);
+                    assert_eq!(restored.columns[0].face_down_len, 0);
+                    assert_eq!(restored.foundation, board.foundation);
+                    assert_eq!(restored.signature != board.signature, hidden);
+                    // Foundation -> column never reveals a hidden tableau card.
+                    assert!(!solver
+                        .successors(&restored, Some(inverse), 2)
+                        .iter()
+                        .any(|t| t.the_move == forward));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn immediate_inverse_without_a_reveal_is_rejected_by_search_as_a_cycle() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 8), false);
+        board.columns[0].push(card(Suit::Heart, 7), false);
+        board.columns[1].push(card(Suit::Spade, 8), false);
+        // Keep this fixture out of the fully visible endgame closure so it
+        // continues to exercise the recursive path-signature cycle check.
+        board.columns[6].push(card(Suit::Diamond, 9), true);
+        board.columns[6].push(card(Suit::Spade, 10), false);
+        board.compute_signature();
+        let forward = KlondikeMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            count: 1,
+        };
+        let after = forward.apply(board).unwrap();
+        let inverse = KlondikeMove::ColumnToColumn {
+            source: 1,
+            destination: 0,
+            count: 1,
+        };
+
+        for draw in [1, 3] {
+            for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+                let solver = KlondikeSolver::new_with_mode(draw, mode);
+                let transitions = solver.successors(&after, Some(forward), 1);
+                assert_eq!(transitions.len(), 1);
+                assert_eq!(transitions[0].the_move, inverse);
+                assert_eq!(transitions[0].to_board.signature, board.signature);
+
+                let mut path = vec![forward];
+                let mut signatures = AHashSet::from_iter([board.signature, after.signature]);
+                let mut tt = AHashMap::new();
+                let mut context = IdaContext::new(Instant::now(), None, 0, draw as u8);
+                let result = solver.search_with_bound(
+                    &after,
+                    1,
+                    100,
+                    &mut path,
+                    0,
+                    &mut signatures,
+                    &mut tt,
+                    &mut context,
+                );
+
+                assert!(matches!(result, IdaSearchResult::NextBound(i64::MAX)));
+                assert_eq!(context.checked_nodes, 1, "the cycle must not be explored");
+                assert!(tt.is_empty());
+                assert_eq!(path, vec![forward]);
+                assert_eq!(signatures.len(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn successors_prioritize_reveals_over_stock_and_foundation_transfers() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Diamond, 9), true);
+        board.columns[0].push(card(Suit::Heart, 5), false);
+        board.columns[1].push(card(Suit::Club, 6), false);
+        board.columns[2].push(card(Suit::Spade, 5), false);
+        board.stock[0] = card(Suit::Diamond, 5);
+        board.stock[1] = card(Suit::Spade, 9);
+        board.stock_len = 2;
+        board.stock_index = 1;
+        board.compute_signature();
+
+        let foundation_reveal = KlondikeMove::ColumnToFoundation {
+            source: 0,
+            card: card(Suit::Heart, 5),
+        };
+        let column_reveal = KlondikeMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            count: 1,
+        };
+        let stock_transfer = KlondikeMove::StockPileToColumn {
+            destination: 1,
+            card: card(Suit::Diamond, 5),
+        };
+        let foundation_transfer = KlondikeMove::FoundationToColumn {
+            destination: 2,
+            card: card(Suit::Heart, 4),
+        };
+
+        for draw in [1, 3] {
+            let solver = KlondikeSolver::new(draw);
+            let transitions = solver.successors(&board, None, 0);
+            let position = |m| transitions.iter().position(|t| t.the_move == m).unwrap();
+            let advance = KlondikeMove::StockPileAdvance {
+                beginning_index: 1,
+                increment: draw as u8,
+            };
+
+            assert!(position(foundation_reveal) < position(advance));
+            assert!(position(column_reveal) < position(advance));
+            assert!(position(advance) < position(stock_transfer));
+            assert!(position(advance) < position(foundation_transfer));
+
+            for m in [foundation_reveal, column_reveal] {
+                assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 1);
+            }
+            for m in [stock_transfer, foundation_transfer, advance] {
+                assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 0);
+            }
+
+            // None of this fixture's candidates is pruned: ordering preserves them all.
+            let candidates = KlondikeMove::find_candidate_moves(&board, draw as u8);
+            assert_eq!(transitions.len(), candidates.len());
+            for m in candidates {
+                assert!(transitions.iter().any(|t| t.the_move == m));
+            }
+        }
+    }
+
+    #[test]
+    fn column_moves_without_hidden_cards_are_not_reveals() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 6), false);
+        board.columns[0].push(card(Suit::Heart, 5), false);
+        board.columns[1].push(card(Suit::Spade, 6), false);
+        board.compute_signature();
+
+        let transitions = KlondikeSolver::new(1).successors(&board, None, 0);
+        for m in [
+            KlondikeMove::ColumnToFoundation {
+                source: 0,
+                card: card(Suit::Heart, 5),
+            },
+            KlondikeMove::ColumnToColumn {
+                source: 0,
+                destination: 1,
+                count: 1,
+            },
+        ] {
+            let transition = transitions.iter().find(|t| t.the_move == m).unwrap();
+            assert_eq!(revealed_hidden_delta(transition, &board), 0);
+            assert_ne!(successor_order_key(transition, &board).0, 0);
+        }
+    }
+
+    #[test]
+    fn foundation_moves_preserve_critical_path_priority_without_a_reveal() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Diamond as usize] = 4;
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Club, 6), false);
+        board.columns[0].push(card(Suit::Diamond, 5), false);
+        board.columns[1].push(card(Suit::Club, 1), true);
+        board.columns[1].push(card(Suit::Spade, 6), false);
+        board.columns[1].push(card(Suit::Heart, 5), false);
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            assert_eq!(transitions.len(), 2);
+            assert_eq!(
+                transitions[0].the_move,
+                KlondikeMove::ColumnToFoundation {
+                    source: 1,
+                    card: card(Suit::Heart, 5),
+                }
+            );
+            for transition in &transitions {
+                assert!(!is_safe_foundation_move(transition, &board));
+                assert_eq!(revealed_hidden_delta(transition, &board), 0);
+                assert_eq!(thoughtful_reveal_value(transition, &board), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn foundation_moves_prioritize_revealing_the_next_foundation_card() {
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Diamond as usize] = 4;
+        board.foundation[Suit::Heart as usize] = 4;
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Diamond, 5), false);
+        board.columns[1].push(card(Suit::Heart, 6), true);
+        board.columns[1].push(card(Suit::Heart, 5), false);
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            assert_eq!(transitions.len(), 2);
+            assert_eq!(
+                transitions[0].the_move,
+                KlondikeMove::ColumnToFoundation {
+                    source: 1,
+                    card: card(Suit::Heart, 5),
+                }
+            );
+            for transition in &transitions {
+                assert!(!is_safe_foundation_move(transition, &board));
+                assert_eq!(revealed_hidden_delta(transition, &board), 1);
+                assert_eq!(critical_path_bonus(transition, &board), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn safe_foundation_fast_path_preserves_its_order_and_candidates() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Spade, 1), false);
+        board.columns[1].push(card(Suit::Heart, 9), true);
+        board.columns[1].push(card(Suit::Club, 1), false);
+        board.stock[0] = card(Suit::Diamond, 13);
+        board.stock_len = 1;
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            let moves: Vec<_> = transitions.iter().map(|t| t.the_move).collect();
+            assert_eq!(
+                moves,
+                vec![
+                    KlondikeMove::ColumnToFoundation {
+                        source: 0,
+                        card: card(Suit::Spade, 1),
+                    },
+                    KlondikeMove::ColumnToFoundation {
+                        source: 1,
+                        card: card(Suit::Club, 1),
+                    },
+                ]
+            );
+        }
+    }
 }

@@ -28,7 +28,7 @@ pub struct BoardEval {
     pub depth_penalty: i64,        // sum of fd + (fd-1)/DIVISOR per column
     pub stock_advance_cost: i64,   // minimum advances needed to access the stock
     pub target_burial_penalty: i64, // penalty for face-down target cards
-    pub deadlock_count: i64,       // number of detected logical deadlocks
+    pub deadlock_count: i64,       // same-suit hidden dependency severity, not proven deadlocks
     pub reveal_bonus: i64,         // bonus for exposing a key card
     pub stranded_blockers: i64,    // blockers above targets with no destination
     pub stock_target_penalty: i64, // penalty for targets trapped in stock
@@ -148,9 +148,9 @@ impl BoardEval {
                 continue;
             }
 
-            // For deadlock detection: the lowest value seen for each suit,
-            // iterating from surface to depth.
-            let mut lowest_ranks = [255i32; 4];
+            // Track the highest hidden rank above each card, per suit,
+            // while iterating from surface to depth.
+            let mut highest_ranks = [0u8; 4];
 
             for i in (0..c.face_down_len).rev() {
                 let card = c.cards[i as usize];
@@ -163,14 +163,14 @@ impl BoardEval {
                     eval.target_burial_penalty += obstacle_count * BURIED_TARGET_PENALTY;
                 }
 
-                // Deadlock detection: rank inversion in the same suit.
-                if lowest_ranks[card_suit] < card_val as i32 {
-                    let severity = (card_val as i32 - lowest_ranks[card_suit]).min(3) as i64;
-                    eval.deadlock_count += severity;
+                // A higher same-suit card above a lower one must move out of
+                // the way before the lower card can reach its foundation.
+                // This is a progress penalty, not proof of an unsolvable state.
+                let blocker_rank = highest_ranks[card_suit];
+                if blocker_rank > card_val {
+                    eval.deadlock_count += (blocker_rank - card_val).min(3) as i64;
                 }
-                if (card_val as i32) < lowest_ranks[card_suit] {
-                    lowest_ranks[card_suit] = card_val as i32;
-                }
+                highest_ranks[card_suit] = blocker_rank.max(card_val);
             }
 
             // Reveal value reward (thoughtful: the face-down card is known).
@@ -325,7 +325,7 @@ impl BoardEval {
 
     /// Progress score for checkpoints (higher is better).
     /// Incorporates thoughtful signals: the solver penalizes checkpoints that
-    /// keep targets buried or deadlocks active.
+    /// keep targets buried or same-suit dependencies blocked.
     pub fn progress_score(&self) -> i64 {
         let mut score = self.foundation_count * PROGRESS_FOUNDATION_WEIGHT
             + self.face_up * PROGRESS_FACE_UP_WEIGHT
@@ -339,10 +339,9 @@ impl BoardEval {
             - self.stranded_blockers * PROGRESS_STRANDED_BLOCKER_PENALTY
             - self.stock_target_penalty;
 
-        // Near-autoplay bonus: states with few hidden cards are close to
-        // auto-play (hidden==0 -> essentially won).
-        // Quadratic bonus that grows quickly as hidden approaches 0.
-        if self.hidden > 0 && self.hidden <= AUTOPLAY_PROXIMITY_THRESHOLD {
+        // Reward uncovering cards all the way to zero hidden cards. Remaining
+        // stock can still prevent a win, so this only influences progress.
+        if (0..=AUTOPLAY_PROXIMITY_THRESHOLD).contains(&self.hidden) {
             let proximity = (AUTOPLAY_PROXIMITY_THRESHOLD + 1 - self.hidden) as i64;
             score += proximity * proximity * PROGRESS_AUTOPLAY_PROXIMITY;
         }
@@ -454,6 +453,8 @@ impl CheckpointPolicy {
 mod tests {
     use super::*;
     use crate::common::card::Suit;
+    use crate::klondike::moves::KlondikeMove;
+    use crate::klondike::solver::KlondikeSolver;
 
     fn card(suit: Suit, value: u8) -> Card {
         Card::new(suit, value)
@@ -570,10 +571,112 @@ mod tests {
         let eval = BoardEval::from_board(&board, 3);
 
         assert!(eval.target_burial_penalty > 0);
-        assert!(eval.deadlock_count > 0);
+        assert_eq!(eval.deadlock_count, 0);
         assert_eq!(eval.reveal_bonus, REVEALED_FOUNDATION_CARD_BONUS);
         assert!(eval.stranded_blockers > 0);
         assert!(eval.stock_target_penalty >= STOCK_MISALIGNED_TARGET_PENALTY);
+    }
+
+    #[test]
+    fn revealing_last_hidden_card_improves_adoptable_progress_with_stock_remaining() {
+        let mut board = KlondikeBoard::new();
+        board.foundation = [4; 4];
+        board.columns[0].push(card(Suit::Club, 6), false);
+        board.columns[1].push(card(Suit::Spade, 9), true);
+        board.columns[1].push(card(Suit::Heart, 5), false);
+        for c in [
+            card(Suit::Club, 13),
+            card(Suit::Heart, 12),
+            card(Suit::Club, 11),
+            card(Suit::Heart, 10),
+        ] {
+            board.columns[2].push(c, false);
+        }
+        for c in [
+            card(Suit::Spade, 13),
+            card(Suit::Diamond, 12),
+            card(Suit::Spade, 11),
+        ] {
+            board.columns[3].push(c, false);
+        }
+        board.columns[4].push(card(Suit::Diamond, 13), false);
+        board.columns[4].push(card(Suit::Spade, 12), false);
+
+        // Complete a valid 52-card position with the remaining 24 cards in stock.
+        let stock: Vec<_> = Card::standard_deck()
+            .into_iter()
+            .filter(|c| {
+                c.value > 4
+                    && !board
+                        .columns
+                        .iter()
+                        .any(|column| column.cards[..column.len as usize].contains(c))
+            })
+            .collect();
+        assert_eq!(stock.len(), 24);
+        set_stock(&mut board, &stock, 0);
+
+        let reveal = KlondikeMove::ColumnToColumn {
+            source: 1,
+            destination: 0,
+            count: 1,
+        };
+        for draw in [1, 3] {
+            assert!(KlondikeMove::find_candidate_moves(&board, draw).contains(&reveal));
+            let after = reveal.apply(board).expect("legal reveal move");
+            let before_eval = BoardEval::from_board(&board, draw);
+            let after_eval = BoardEval::from_board(&after, draw);
+
+            assert_eq!(before_eval.hidden, 1);
+            assert_eq!(after_eval.hidden, 0);
+            assert_eq!(after.stock_len, 24);
+            assert!(!KlondikeSolver::is_win(&after));
+            assert!(after_eval.progress_score() > before_eval.progress_score());
+            assert!(CheckpointPolicy::default_policy().is_adoptable(
+                before_eval.progress_score(),
+                after_eval.progress_score(),
+                board.total_foundation_count(),
+            ));
+        }
+    }
+
+    #[test]
+    fn hidden_dependencies_penalize_lower_cards_below_higher_cards_of_the_same_suit() {
+        for (buried, above, expected_severity) in [
+            (card(Suit::Club, 1), card(Suit::Club, 4), 3),
+            (card(Suit::Club, 4), card(Suit::Club, 1), 0),
+            (card(Suit::Club, 1), card(Suit::Club, 2), 1),
+            (card(Suit::Club, 1), card(Suit::Club, 13), 3),
+            (card(Suit::Club, 1), card(Suit::Spade, 4), 0),
+        ] {
+            let mut board = KlondikeBoard::new();
+            board.columns[2].push(buried, true);
+            board.columns[2].push(above, true);
+            board.columns[2].push(card(Suit::Heart, 9), false);
+            board.compute_signature();
+
+            for draw in [1, 3] {
+                assert_eq!(
+                    BoardEval::from_board(&board, draw).deadlock_count,
+                    expected_severity,
+                    "hidden cards from base to surface: {buried:?}, {above:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_dependency_tracking_is_local_to_each_column() {
+        let mut board = KlondikeBoard::new();
+        board.columns[1].push(card(Suit::Club, 13), true);
+        board.columns[1].push(card(Suit::Heart, 9), false);
+        board.columns[2].push(card(Suit::Club, 1), true);
+        board.columns[2].push(card(Suit::Diamond, 9), false);
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            assert_eq!(BoardEval::from_board(&board, draw).deadlock_count, 0);
+        }
     }
 
     #[test]

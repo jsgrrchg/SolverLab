@@ -29,8 +29,8 @@ pub enum KlondikeRule {
     /// Discards moves that exceed the maximum allowed depth.
     DepthLimit { max_depth: usize },
 
-    /// Discards moves that exactly undo the previous move (immediate undo).
-    /// Prevents short cycles with no progress.
+    /// Discards immediate inverses unless the previous move may have revealed a card.
+    /// Ambiguous cases are left to the search's path-signature cycle check.
     NoImmediateUndo,
 
     /// Discards moves where the resulting board is identical to the previous one.
@@ -80,14 +80,23 @@ impl KlondikeRule {
                             destination: d,
                             count: c2,
                         },
-                    ) => a == d && b == c && c1 == c2,
+                    ) => {
+                        // A reveal leaves exactly one face-up card in the source.
+                        // One visible card can also remain without a reveal; path
+                        // signatures reject those genuine cycles after apply().
+                        a == d && b == c && c1 == c2 && board.columns[a as usize].num_face_up() != 1
+                    }
                     (
                         KlondikeMove::ColumnToFoundation { source, card },
                         KlondikeMove::FoundationToColumn {
                             destination,
                             card: same_card,
                         },
-                    ) => source == destination && card == same_card,
+                    ) => {
+                        source == destination
+                            && card == same_card
+                            && board.columns[source as usize].num_face_up() != 1
+                    }
                     (
                         KlondikeMove::FoundationToColumn { destination, card },
                         KlondikeMove::ColumnToFoundation {
@@ -214,6 +223,57 @@ mod tests {
         rules
             .iter()
             .any(|r| matches!(r, KlondikeRule::KingToEmptyMustExpose))
+    }
+
+    #[test]
+    fn immediate_inverse_is_still_pruned_when_the_source_cannot_have_revealed() {
+        let rule = KlondikeRule::NoImmediateUndo;
+        for remaining_face_up in [0, 2] {
+            let moved = Card::new(Suit::Heart, if remaining_face_up == 0 { 13 } else { 7 });
+            let mut board = KlondikeBoard::new();
+            if remaining_face_up == 2 {
+                board.columns[0].push(Card::new(Suit::Diamond, 9), false);
+                board.columns[0].push(Card::new(Suit::Club, 8), false);
+            }
+            board.columns[0].push(moved, false);
+            if remaining_face_up == 2 {
+                board.columns[1].push(Card::new(Suit::Spade, 8), false);
+            }
+            board.foundation[Suit::Heart as usize] = moved.value - 1;
+            board.compute_signature();
+
+            for (forward, inverse) in [
+                (
+                    KlondikeMove::ColumnToColumn {
+                        source: 0,
+                        destination: 1,
+                        count: 1,
+                    },
+                    KlondikeMove::ColumnToColumn {
+                        source: 1,
+                        destination: 0,
+                        count: 1,
+                    },
+                ),
+                (
+                    KlondikeMove::ColumnToFoundation {
+                        source: 0,
+                        card: moved,
+                    },
+                    KlondikeMove::FoundationToColumn {
+                        destination: 0,
+                        card: moved,
+                    },
+                ),
+            ] {
+                let after = forward.apply(board).unwrap();
+                assert_eq!(after.columns[0].num_face_up(), remaining_face_up);
+                assert!(after.columns[0].can_add_run(moved));
+                assert!(rule.can_prune_early(&after, inverse, Some(forward), 2));
+                assert!(!rule.can_prune_early(&after, inverse, None, 2));
+                assert_eq!(inverse.apply(after).unwrap().signature, board.signature);
+            }
+        }
     }
 
     /// Verifies that Fast includes the heuristic rules and Strict does not.
