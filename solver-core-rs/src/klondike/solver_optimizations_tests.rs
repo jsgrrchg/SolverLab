@@ -111,6 +111,135 @@ fn visible_closure_returns_exact_bound_and_obeys_the_smallest_depth_limit() {
 }
 
 #[test]
+fn visible_closure_preserves_partial_progress_at_the_depth_limit() {
+    let board = visible_endgame();
+    for draw in [1, 3] {
+        for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+            for max_depth in [0, 1, 3, 7, 8, 11, 12] {
+                let mut solver = KlondikeSolver::new_with_mode(draw, mode);
+                solver.rules.push(KlondikeRule::DepthLimit { max_depth });
+                let stats = solver.solve_with_stats(&board, true);
+                assert_eq!(stats.checkpoints_adopted, 0);
+                if max_depth == 0 {
+                    assert!(stats.moves.is_none());
+                } else {
+                    let moves = stats.moves.expect("legal progress within the depth limit");
+                    assert_eq!(moves.len(), max_depth, "draw={draw}, mode={mode:?}");
+                    let after = replay(board, &moves, draw as u8);
+                    assert_eq!(after.total_foundation_count(), 40 + max_depth);
+                    assert_eq!(KlondikeSolver::is_win(&after), max_depth == 12);
+                }
+                if max_depth < 12 {
+                    assert!(solver.solve(&board, false).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn visible_partial_closure_keeps_the_prefix_and_respects_bound_and_sampling() {
+    let initial = visible_endgame();
+    let first = KlondikeMove::ColumnToFoundation {
+        source: 0,
+        card: Card::new(Suit::Club, 11),
+    };
+    let after = first.apply(initial).unwrap();
+    for draw in [1, 3] {
+        for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+            for max_depth in [7, 8] {
+                let mut solver = KlondikeSolver::new_with_mode(draw, mode);
+                solver.rules.push(KlondikeRule::DepthLimit { max_depth });
+                for phase in 0..4 {
+                    let mut ctx = context(draw as u8);
+                    ctx.allow_partial = true;
+                    ctx.progress_sample_counter = phase;
+                    assert_eq!(
+                        solver.try_finish_visible_without_stock(
+                            &after,
+                            1,
+                            max_depth as i64 - 1,
+                            &[first],
+                            &mut ctx,
+                        ),
+                        Some(IdaSearchResult::NextBound(max_depth as i64))
+                    );
+                    assert_eq!(ctx.checked_nodes, 0);
+                    assert_eq!(ctx.progress_sample_counter, phase);
+                    assert!(ctx.best_progress_path.is_empty());
+                    assert_eq!(
+                        solver.try_finish_visible_without_stock(
+                            &after,
+                            1,
+                            max_depth as i64,
+                            &[first],
+                            &mut ctx,
+                        ),
+                        Some(IdaSearchResult::NextBound(i64::MAX))
+                    );
+                    assert!(ctx.solution_path.is_none());
+                    assert_eq!(ctx.best_progress_path.len(), max_depth);
+                    assert_eq!(ctx.best_progress_path[0], first);
+                    assert_eq!(ctx.checked_nodes, (max_depth - 1) as u64);
+                    assert_eq!(ctx.checkpoint_nodes, ctx.checked_nodes);
+                    assert_eq!(ctx.progress_sample_counter, phase + ctx.checked_nodes);
+                    let end = replay(initial, &ctx.best_progress_path, draw as u8);
+                    assert_eq!(end.total_foundation_count(), 40 + max_depth);
+                    assert_eq!(
+                        ctx.best_progress,
+                        BoardEval::from_board(&end, draw as u8).progress_score()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn visible_partial_closure_obeys_node_and_time_budgets() {
+    let board = visible_endgame();
+    for draw in [1, 3] {
+        for mode in [KlondikeSolveMode::Fast, KlondikeSolveMode::Strict] {
+            let mut solver = KlondikeSolver::new_with_mode(draw, mode);
+            solver.rules.push(KlondikeRule::DepthLimit { max_depth: 8 });
+            for limit in [1, 3, 7, 8] {
+                let mut ctx = context(draw as u8);
+                ctx.allow_partial = true;
+                ctx.checkpoint_node_limit = limit;
+                assert_eq!(
+                    solver.try_finish_visible_without_stock(&board, 0, 8, &[], &mut ctx),
+                    Some(IdaSearchResult::CheckpointTriggered)
+                );
+                assert_eq!(ctx.checked_nodes, limit);
+                assert_eq!(ctx.checkpoint_nodes, limit);
+                assert_eq!(ctx.progress_sample_counter, limit);
+                assert!(ctx.solution_path.is_none());
+                assert_eq!(ctx.best_progress_path.len(), limit as usize);
+                assert_eq!(
+                    replay(board, &ctx.best_progress_path, draw as u8).total_foundation_count(),
+                    40 + limit as usize
+                );
+            }
+            let mut expired = IdaContext::new(
+                Instant::now() - Duration::from_secs(1),
+                Some(Duration::ZERO),
+                0,
+                draw as u8,
+            );
+            expired.allow_partial = true;
+            assert_eq!(
+                solver.try_finish_visible_without_stock(&board, 0, 8, &[], &mut expired),
+                Some(IdaSearchResult::Timeout)
+            );
+            assert_eq!(expired.checked_nodes, 0);
+            assert_eq!(expired.checkpoint_nodes, 0);
+            assert!(expired.best_progress_path.is_empty());
+            assert!(expired.solution_path.is_none());
+        }
+    }
+}
+
+#[test]
 fn visible_closure_checks_budgets_before_accepting_the_last_move_as_a_win() {
     let board = visible_endgame();
     let solver = KlondikeSolver::new(3);

@@ -208,6 +208,7 @@ impl KlondikeSolver {
         current_board.compute_signature();
         let eval = BoardEval::from_board(&current_board, self.draw_advance);
         let mut context = IdaContext::new(start, timeout, eval.progress_score(), self.draw_advance);
+        context.allow_partial = allow_partial;
 
         loop {
             if context.timeout_reached() {
@@ -412,7 +413,8 @@ impl KlondikeSolver {
     }
 
     /// Finish a valid, fully visible tableau without stock or waste by legal
-    /// foundation moves. Return the exact required bound before building a tail.
+    /// foundation moves. Bound the tail by the depth limit when partial results
+    /// are allowed, retaining its final progress even between sampling points.
     fn try_finish_visible_without_stock(
         &self,
         board: &KlondikeBoard,
@@ -439,18 +441,27 @@ impl KlondikeSolver {
             .unwrap_or(usize::MAX);
         let remaining = 52usize.saturating_sub(board.total_foundation_count());
         let finish_depth = depth.saturating_add(remaining);
-        if finish_depth > max_depth {
+        if finish_depth > max_depth && !context.allow_partial {
             return Some(IdaSearchResult::NextBound(i64::MAX));
         }
-        if finish_depth as i64 > bound {
-            return Some(IdaSearchResult::NextBound(finish_depth as i64));
+        let target_depth = finish_depth.min(max_depth);
+        if target_depth as i64 > bound {
+            return Some(IdaSearchResult::NextBound(target_depth as i64));
         }
 
         let mut current = *board;
+        let mut current_depth = depth;
         let mut moves = prefix.to_vec();
-        while !Self::is_win(&current) {
+        let result = loop {
+            if Self::is_win(&current) {
+                context.solution_path = Some(moves);
+                return Some(IdaSearchResult::Found);
+            }
+            if current_depth >= max_depth {
+                break IdaSearchResult::NextBound(i64::MAX);
+            }
             if context.timeout_reached() {
-                return Some(IdaSearchResult::Timeout);
+                break IdaSearchResult::Timeout;
             }
             let next_move = (0..7).find_map(|source| {
                 let card = current.columns[source].top_face_up()?;
@@ -462,26 +473,29 @@ impl KlondikeSolver {
                     })
             });
             let Some(next_move) = next_move else {
-                return Some(IdaSearchResult::NextBound(i64::MAX));
+                break IdaSearchResult::NextBound(i64::MAX);
             };
             let Some(next_board) = next_move.apply(current) else {
-                return Some(IdaSearchResult::NextBound(i64::MAX));
+                break IdaSearchResult::NextBound(i64::MAX);
             };
             current = next_board;
+            current_depth += 1;
             moves.push(next_move);
             context.consider_progress(&current, &moves);
 
             // Same accounting order as recursion: charge the primitive child,
             // check budgets, then recognize a win (including on the last move).
             if context.should_timeout() {
-                return Some(IdaSearchResult::Timeout);
+                break IdaSearchResult::Timeout;
             }
             if context.should_checkpoint() {
-                return Some(IdaSearchResult::CheckpointTriggered);
+                break IdaSearchResult::CheckpointTriggered;
             }
+        };
+        if context.allow_partial && !moves.is_empty() {
+            context.record_progress(&current, &moves);
         }
-        context.solution_path = Some(moves);
-        Some(IdaSearchResult::Found)
+        Some(result)
     }
 
     // ── Main IDA* recursion ─────────────
@@ -647,6 +661,7 @@ pub struct IdaContext {
     timeout: Option<Duration>,
     checked_nodes: u64,
     progress_sample_counter: u64,
+    allow_partial: bool,
     pub best_progress: i64,
     pub best_progress_path: Vec<KlondikeMove>,
     pub solution_path: Option<Vec<KlondikeMove>>,
@@ -670,6 +685,7 @@ impl IdaContext {
             timeout,
             checked_nodes: 0,
             progress_sample_counter: 0,
+            allow_partial: false,
             checkpoint_nodes: 0,
             checkpoint_node_limit: weights::CHECKPOINT_FALLBACK_LIMIT,
             best_progress: initial_progress,
@@ -723,7 +739,11 @@ impl IdaContext {
         if self.progress_sample_counter & 3 != 0 {
             return;
         }
+        self.record_progress(board, path);
+    }
 
+    // Terminal partial paths must not depend on the four-node sampling phase.
+    fn record_progress(&mut self, board: &KlondikeBoard, path: &[KlondikeMove]) {
         let score = BoardEval::from_board(board, self.draw_advance).progress_score();
 
         if score > self.best_progress {
