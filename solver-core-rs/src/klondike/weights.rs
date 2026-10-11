@@ -194,9 +194,9 @@ pub const TT_MAX_ENTRIES: usize = 5_000_000;
 /// Checkpoint node limit used as the initial fallback.
 pub const CHECKPOINT_FALLBACK_LIMIT: u64 = 500_000;
 
-/// Table of base node limits by difficulty (hidden_bucket).
+/// Table of base node limits by difficulty (hidden_bucket) for Draw 1.
 /// Index 0..5: based on hidden-card range. Index 6: endgame (fc > 30).
-pub const CHECKPOINT_BASE_LIMITS: [u64; 7] = [
+pub const CHECKPOINT_BASE_LIMITS_DRAW1: [u64; 7] = [
     800_000,   // hidden 0-6 (Basic)
     1_200_000, // hidden 7-9 (Lower-mid)
     1_800_000, // hidden 10–12 (Normal)
@@ -204,4 +204,16 @@ pub const CHECKPOINT_BASE_LIMITS: [u64; 7] = [
     3_500_000, // hidden 16-18 (Hard)
     8_000_000, // hidden 19+ (Very hard)
     800_000,   // endgame: fc > 30, hidden <= 6; matched to base to avoid losing nearly won games
+];
+
+/// Draw 3 base node limits: the Draw 1 table raised ~13%, the time per game
+/// that the stock macro moves saved in Draw 3, so wall-clock stays level.
+pub const CHECKPOINT_BASE_LIMITS_DRAW3: [u64; 7] = [
+    900_000,   // hidden 0-6 (Basic)
+    1_350_000, // hidden 7-9 (Lower-mid)
+    2_000_000, // hidden 10–12 (Normal)
+    2_500_000, // hidden 13-15 (Upper-mid)
+    3_950_000, // hidden 16-18 (Hard)
+    9_000_000, // hidden 19+ (Very hard)
+    900_000,   // endgame: fc > 30, hidden <= 6
 ];

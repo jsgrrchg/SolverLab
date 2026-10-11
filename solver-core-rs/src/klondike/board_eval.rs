@@ -23,7 +23,6 @@ pub struct BoardEval {
     pub blocked_kings: i64,
     pub stock_remaining: i64,
     pub waste_count: i64,
-    pub stock_inaccessible: i64,
     pub foundation_imbalance: i64, // max_rank - min_rank (raw, no tolerance)
     pub depth_penalty: i64,        // sum of fd + (fd-1)/DIVISOR per column
     pub stock_advance_cost: i64,   // minimum advances needed to access the stock
@@ -89,20 +88,10 @@ impl BoardEval {
         let stock_remaining = board.stock_len.saturating_sub(board.stock_index) as i64;
         let waste_count = board.stock_index as i64;
 
-        // Inaccessible stock: restored global formula.
-        // With Draw-1 all cards are sequentially accessible.
-        // With Draw-3 only ceil(remaining/3) are directly accessible.
-        let da = (draw_advance as i64).max(1);
-        let stock_inaccessible = if stock_remaining > 0 && da > 1 {
-            let accessible = (stock_remaining + da - 1) / da;
-            stock_remaining.saturating_sub(accessible)
-        } else {
-            0
-        };
-
         // Stock advance cost: minimum number of advance moves needed to make
         // each remaining stock card accessible.
         // These are non-foundation moves, added to the base 52-fc.
+        let da = (draw_advance as i64).max(1);
         let stock_advance_cost = if stock_remaining > 0 {
             (stock_remaining + da - 1) / da
         } else {
@@ -117,7 +106,6 @@ impl BoardEval {
             blocked_kings,
             stock_remaining,
             waste_count,
-            stock_inaccessible,
             foundation_imbalance: max_rank - min_rank,
             depth_penalty,
             stock_advance_cost,
@@ -401,11 +389,15 @@ pub struct CheckpointPolicy {
 }
 
 impl CheckpointPolicy {
-    /// Default policy: the values currently used by the solver.
-    pub fn default_policy() -> Self {
+    /// Policy for a draw count: Draw 1 and Draw 3 have their own node limits.
+    pub fn for_draw(draw_advance: u8) -> Self {
         Self {
             max_adoptions: MAX_CHECKPOINTS,
-            base_limits: CHECKPOINT_BASE_LIMITS,
+            base_limits: if draw_advance > 1 {
+                CHECKPOINT_BASE_LIMITS_DRAW3
+            } else {
+                CHECKPOINT_BASE_LIMITS_DRAW1
+            },
         }
     }
 
@@ -532,9 +524,8 @@ mod tests {
         let draw_three = BoardEval::from_board_fast(&board, 3);
 
         assert_eq!(draw_one.stock_remaining, 6);
-        assert_eq!(draw_one.stock_inaccessible, 0);
         assert_eq!(draw_one.stock_advance_cost, 6);
-        assert_eq!(draw_three.stock_inaccessible, 4);
+        assert_eq!(draw_three.stock_remaining, 6);
         assert_eq!(draw_three.stock_advance_cost, 2);
     }
 
@@ -632,7 +623,7 @@ mod tests {
             assert_eq!(after.stock_len, 24);
             assert!(!KlondikeSolver::is_win(&after));
             assert!(after_eval.progress_score() > before_eval.progress_score());
-            assert!(CheckpointPolicy::default_policy().is_adoptable(
+            assert!(CheckpointPolicy::for_draw(draw).is_adoptable(
                 before_eval.progress_score(),
                 after_eval.progress_score(),
                 board.total_foundation_count(),
@@ -705,8 +696,35 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_policy_selects_node_limits_by_draw_count() {
+        let draw_one = CheckpointPolicy::for_draw(1);
+        let draw_three = CheckpointPolicy::for_draw(3);
+        assert_eq!(draw_one.base_limits, CHECKPOINT_BASE_LIMITS_DRAW1);
+        assert_eq!(draw_three.base_limits, CHECKPOINT_BASE_LIMITS_DRAW3);
+        assert_eq!(draw_one.max_adoptions, draw_three.max_adoptions);
+        // Draw 3 gets back the time the stock macros saved: every bucket is
+        // larger, by a bounded margin.
+        for (one, three) in CHECKPOINT_BASE_LIMITS_DRAW1
+            .iter()
+            .zip(CHECKPOINT_BASE_LIMITS_DRAW3)
+        {
+            assert!(three > *one);
+            assert!(three * 100 <= one * 115, "{three} vs {one}");
+        }
+        // Any multi-card draw uses the Draw 3 table.
+        assert_eq!(
+            CheckpointPolicy::for_draw(2).base_limits,
+            CHECKPOINT_BASE_LIMITS_DRAW3
+        );
+
+        let hidden_21 = board_with_hidden_counts([3, 3, 3, 3, 3, 3, 3]);
+        assert_eq!(draw_one.base_limit_for(&hidden_21), 8_000_000);
+        assert_eq!(draw_three.base_limit_for(&hidden_21), 9_000_000);
+    }
+
+    #[test]
     fn checkpoint_policy_is_adoptable_uses_phase_thresholds() {
-        let policy = CheckpointPolicy::default_policy();
+        let policy = CheckpointPolicy::for_draw(1);
 
         assert!(!policy.is_adoptable(1_000, 1_100, 0));
         assert!(policy.is_adoptable(1_000, 1_150, 0));

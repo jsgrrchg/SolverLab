@@ -711,7 +711,7 @@ impl IdaContext {
             solution_path: None,
             adopted_checkpoint_hashes: AHashSet::new(),
             checkpoints_adopted: 0,
-            policy: CheckpointPolicy::default_policy(),
+            policy: CheckpointPolicy::for_draw(draw_advance),
             draw_advance,
         }
     }
