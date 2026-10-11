@@ -1101,6 +1101,9 @@ mod tests {
             board.foundation[Suit::Heart as usize] = 6;
             board.columns[0].push(card(Suit::Club, 8), hidden);
             board.columns[0].push(card(Suit::Heart, 7), false);
+            // A visible black six keeps the rollback past FoundationRollbackNeedsReceiver.
+            board.columns[1].push(card(Suit::Diamond, 10), true);
+            board.columns[1].push(card(Suit::Spade, 6), false);
             complete_inverse_fixture(&mut board);
             let forward = KlondikeMove::ColumnToFoundation {
                 source: 0,
@@ -1205,6 +1208,8 @@ mod tests {
         board.columns[0].push(card(Suit::Heart, 5), false);
         board.columns[1].push(card(Suit::Club, 6), false);
         board.columns[2].push(card(Suit::Spade, 5), false);
+        // A visible black three lets the 4♥ rollback past FoundationRollbackNeedsReceiver.
+        board.columns[3].push(card(Suit::Club, 3), false);
         board.stock[0] = card(Suit::Diamond, 5);
         board.stock[1] = card(Suit::Spade, 9);
         board.stock_len = 2;
