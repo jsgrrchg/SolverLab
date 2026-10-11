@@ -393,6 +393,34 @@ fn klondike_move_to_desc(m: &klondike::moves::KlondikeMove) -> KlondikeMoveDesc 
             card_suit: 0,
             card_value: 0,
         },
+        // Stock macros never leave the solver: `solve_with_stats` expands them
+        // into primitives. Describe the final play so a stray one is still legible.
+        klondike::moves::KlondikeMove::StockDrawToColumn {
+            destination, card, ..
+        } => KlondikeMoveDesc {
+            move_type: "stockToColumn".into(),
+            source: -1,
+            destination: *destination as i32,
+            card_count: 1,
+            card_suit: card.suit as u8,
+            card_value: card.value,
+        },
+        klondike::moves::KlondikeMove::StockDrawToFoundation { card, .. } => KlondikeMoveDesc {
+            move_type: "stockToFoundation".into(),
+            source: -1,
+            destination: -1,
+            card_count: 1,
+            card_suit: card.suit as u8,
+            card_value: card.value,
+        },
+        klondike::moves::KlondikeMove::StockDrawRecycle { .. } => KlondikeMoveDesc {
+            move_type: "stockRecycle".into(),
+            source: -1,
+            destination: -1,
+            card_count: 0,
+            card_suit: 0,
+            card_value: 0,
+        },
         klondike::moves::KlondikeMove::Deal => KlondikeMoveDesc {
             move_type: "deal".into(),
             source: -1,

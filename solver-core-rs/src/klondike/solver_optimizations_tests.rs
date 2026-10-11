@@ -36,7 +36,7 @@ fn assert_full_deck(board: &KlondikeBoard) {
 fn replay(mut board: KlondikeBoard, moves: &[KlondikeMove], draw: u8) -> KlondikeBoard {
     assert_full_deck(&board);
     for &step in moves {
-        assert!(KlondikeMove::find_candidate_moves(&board, draw).contains(&step));
+        assert!(KlondikeMove::find_primitive_moves(&board, draw).contains(&step));
         board = step.apply(board).expect("legal primitive replay");
         assert_full_deck(&board);
     }
@@ -346,7 +346,7 @@ impl KlondikeSolver {
         for transition in transitions {
             let next_board = transition.to_board;
             let next_signature = next_board.signature;
-            let next_depth = depth + 1;
+            let next_depth = transition.depth;
             let next_remaining_budget = bound - next_depth as i64;
             let next_undo_count = if transition.the_move.is_from_foundation() {
                 undo_count + 1

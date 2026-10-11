@@ -148,6 +148,10 @@ pub const PRIORITY_STACK_BONUS: i64 = 20;
 /// Secondary bonus for creating an empty column in C2C.
 pub const PRIORITY_EMPTY_COL_BONUS: i64 = 300;
 
+/// Secondary penalty per stock advance folded into a stock macro move:
+/// nearer waste cards are explored first.
+pub const PRIORITY_DRAW_COST: i64 = 15;
+
 /// ── Checkpoint Adoption ─────────────────────────
 /// Defines the progress required to adopt a checkpoint.
 
