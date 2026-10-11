@@ -1,5 +1,5 @@
 use super::board::KlondikeBoard;
-use crate::common::card::Card;
+use crate::common::card::{Card, Suit};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum KlondikeMove {
@@ -66,7 +66,8 @@ impl KlondikeMove {
         let mut moves = Vec::with_capacity(32);
         let first_empty = board.columns.iter().position(|column| column.len == 0);
         let increment = draw_advance.max(1);
-        let reachable = reachable_waste_positions(board, increment);
+        let (reachable_buffer, reachable_len) = reachable_waste_positions(board, increment);
+        let reachable = &reachable_buffer[..reachable_len];
 
         // 1. Column to foundation.
         for c in 0..7 {
@@ -81,7 +82,7 @@ impl KlondikeMove {
         }
 
         // 2. Stock to foundation, for every waste card reachable in this pass.
-        for &(advances, card) in &reachable {
+        for &(advances, card) in reachable {
             if board.can_add_to_foundation(card) {
                 moves.push(if advances == 0 {
                     KlondikeMove::StockPileToFoundation { card }
@@ -130,7 +131,7 @@ impl KlondikeMove {
         }
 
         // 4. Stock to column, for every waste card reachable in this pass.
-        for &(advances, card) in &reachable {
+        for &(advances, card) in reachable {
             for dest in 0..7 {
                 if board.columns[dest].len == 0 && Some(dest) != first_empty {
                     continue;
@@ -276,53 +277,42 @@ impl KlondikeMove {
                 board.stock_recycles = 0;
                 let s_idx = source as usize;
                 let d_idx = destination as usize;
-                let s_col = &mut board.columns[s_idx];
-                if s_col.len < s_col.face_down_len + count {
+                let s_col = &board.columns[s_idx];
+                if count == 0 || s_col.len < s_col.face_down_len + count {
                     return None;
                 }
 
-                let start_idx = s_col.len - count;
-                let mut moved =
-                    [crate::common::card::Card::new(crate::common::card::Suit::Club, 0); 13];
-                for i in 0..count {
-                    moved[i as usize] = s_col.cards[(start_idx + i) as usize];
+                // Move the run card by card, keeping the signature in sync.
+                let start_idx = (s_col.len - count) as usize;
+                let mut moved = [Card::new(Suit::Club, 0); 13];
+                moved[..count as usize]
+                    .copy_from_slice(&s_col.cards[start_idx..start_idx + count as usize]);
+                for _ in 0..count {
+                    board.pop_face_up(s_idx)?;
                 }
-
-                s_col.len -= count;
                 // Reveals a card if the moved run consumed all face-up cards.
-                if s_col.len > 0 && s_col.face_down_len == s_col.len {
-                    s_col.face_down_len -= 1;
-                }
-
-                let d_col = &mut board.columns[d_idx];
-                for i in 0..count {
-                    d_col.cards[d_col.len as usize] = moved[i as usize];
-                    d_col.len += 1;
+                board.reveal_top_if_hidden(s_idx);
+                for &card in &moved[..count as usize] {
+                    board.push_face_up(d_idx, card);
                 }
             }
             KlondikeMove::ColumnToFoundation { source, .. } => {
                 board.stock_recycles = 0;
                 let s_idx = source as usize;
-                let card = board.columns[s_idx].pop()?;
-                board.foundation[card.suit as usize] = card.value; // Stores the highest rank.
-
-                let col = &mut board.columns[s_idx];
-                if col.len > 0 && col.face_down_len == col.len {
-                    col.face_down_len -= 1;
-                }
+                let card = board.pop_face_up(s_idx)?;
+                board.set_foundation_rank(card.suit, card.value); // Stores the highest rank.
+                board.reveal_top_if_hidden(s_idx);
             }
             KlondikeMove::StockPileToColumn {
                 destination,
                 card: _,
             } => {
-                let c = take_waste_card(&mut board)?;
-                let d_col = &mut board.columns[destination as usize];
-                d_col.cards[d_col.len as usize] = c;
-                d_col.len += 1;
+                let c = board.take_waste_card()?;
+                board.push_face_up(destination as usize, c);
             }
             KlondikeMove::StockPileToFoundation { card } => {
-                take_waste_card(&mut board)?;
-                board.foundation[card.suit as usize] = card.value;
+                board.take_waste_card()?;
+                board.set_foundation_rank(card.suit, card.value);
             }
             KlondikeMove::StockDrawToColumn {
                 advances,
@@ -333,13 +323,11 @@ impl KlondikeMove {
                 for _ in 0..advances {
                     advance_stock(&mut board, increment)?;
                 }
-                let c = take_waste_card(&mut board)?;
+                let c = board.take_waste_card()?;
                 if c != card {
                     return None;
                 }
-                let d_col = &mut board.columns[destination as usize];
-                d_col.cards[d_col.len as usize] = c;
-                d_col.len += 1;
+                board.push_face_up(destination as usize, c);
             }
             KlondikeMove::StockDrawToFoundation {
                 advances,
@@ -349,10 +337,10 @@ impl KlondikeMove {
                 for _ in 0..advances {
                     advance_stock(&mut board, increment)?;
                 }
-                if take_waste_card(&mut board)? != card {
+                if board.take_waste_card()? != card {
                     return None;
                 }
-                board.foundation[card.suit as usize] = card.value;
+                board.set_foundation_rank(card.suit, card.value);
             }
             KlondikeMove::StockDrawRecycle {
                 advances,
@@ -364,7 +352,7 @@ impl KlondikeMove {
                 if !board.can_recycle_stock() {
                     return None;
                 }
-                board.stock_index = 0;
+                board.set_stock_index(0);
                 board.stock_recycles += 1;
             }
             KlondikeMove::FoundationToColumn { destination, card } => {
@@ -372,10 +360,8 @@ impl KlondikeMove {
                 if board.foundation[card.suit as usize] != card.value {
                     return None;
                 }
-                board.foundation[card.suit as usize] -= 1;
-                let col = &mut board.columns[destination as usize];
-                col.cards[col.len as usize] = card;
-                col.len += 1;
+                board.set_foundation_rank(card.suit, card.value - 1);
+                board.push_face_up(destination as usize, card);
             }
             KlondikeMove::StockPileAdvance {
                 beginning_index: _,
@@ -387,13 +373,17 @@ impl KlondikeMove {
                 if !board.can_recycle_stock() {
                     return None;
                 }
-                board.stock_index = 0;
+                board.set_stock_index(0);
                 board.stock_recycles += 1;
             }
             KlondikeMove::Deal => return None, // Deal should not be applied dynamically in the IDA* flow.
         }
 
-        board.compute_signature();
+        debug_assert_eq!(
+            board.signature,
+            super::board::klondike_signature(&board),
+            "incremental signature drifted after {self:?}"
+        );
         Some(board)
     }
 
@@ -422,16 +412,27 @@ impl KlondikeMove {
     }
 }
 
+/// Upper bound on waste positions reachable in one pass: the current waste
+/// card plus every remaining stock card (Draw 1).
+const MAX_REACHABLE: usize = 25;
+
 /// Waste cards reachable in the current pass as `(advances, card)`: the
 /// current waste card first (0 advances), then every `increment`-th card and
 /// the last one. Positions are 1-based stock indices, like `stock_index`.
-fn reachable_waste_positions(board: &KlondikeBoard, increment: u8) -> Vec<(u8, Card)> {
-    let mut reachable = Vec::with_capacity(9);
+/// Returns a fixed buffer and the number of valid entries to avoid a heap
+/// allocation per search node.
+fn reachable_waste_positions(
+    board: &KlondikeBoard,
+    increment: u8,
+) -> ([(u8, Card); MAX_REACHABLE], usize) {
+    let mut reachable = [(0u8, Card::new(Suit::Club, 0)); MAX_REACHABLE];
+    let mut len = 0usize;
     let mut index = board.stock_index;
     let mut advances = 0u8;
     loop {
-        if index > 0 && index <= board.stock_len {
-            reachable.push((advances, board.stock[(index - 1) as usize]));
+        if index > 0 && index <= board.stock_len && len < MAX_REACHABLE {
+            reachable[len] = (advances, board.stock[(index - 1) as usize]);
+            len += 1;
         }
         if index >= board.stock_len {
             break;
@@ -439,7 +440,7 @@ fn reachable_waste_positions(board: &KlondikeBoard, increment: u8) -> Vec<(u8, C
         index = index.saturating_add(increment).min(board.stock_len);
         advances += 1;
     }
-    reachable
+    (reachable, len)
 }
 
 /// Advances needed to reach the end of the stock from the current position.
@@ -452,28 +453,12 @@ fn advance_stock(board: &mut KlondikeBoard, increment: u8) -> Option<()> {
     if !board.can_advance_stock() {
         return None;
     }
-    board.stock_index = board
+    let next = board
         .stock_index
         .saturating_add(increment)
         .min(board.stock_len);
+    board.set_stock_index(next);
     Some(())
-}
-
-/// Removes the current waste card, compacting the stock so the card below it
-/// becomes the new waste card. Resets the recycle counter.
-fn take_waste_card(board: &mut KlondikeBoard) -> Option<Card> {
-    if board.stock_index == 0 || board.stock_index > board.stock_len {
-        return None;
-    }
-    let real_idx = (board.stock_index - 1) as usize;
-    let card = board.stock[real_idx];
-    for i in real_idx..board.stock_len as usize - 1 {
-        board.stock[i] = board.stock[i + 1];
-    }
-    board.stock_len -= 1;
-    board.stock_index -= 1;
-    board.stock_recycles = 0;
-    Some(card)
 }
 
 /// Replays `path` from `initial`, expanding stock macros into the primitive

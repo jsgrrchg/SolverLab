@@ -179,7 +179,8 @@ impl KlondikeSolver {
             }
         }
 
-        transitions.sort_by_cached_key(|t| successor_order_key(t, board));
+        let ordering = OrderingContext::new(board);
+        transitions.sort_by_cached_key(|t| successor_order_key(t, board, &ordering));
         transitions
     }
 
@@ -797,31 +798,58 @@ pub fn progress_token(board: &KlondikeBoard) -> String {
 fn successor_order_key(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
+    ordering: &OrderingContext,
 ) -> (u8, std::cmp::Reverse<i64>) {
     // Lexicographic order: group first (move type), then local priority.
     let revealed_delta = revealed_hidden_delta(transition, from_board);
     let exposed_bonus = revealed_delta as i64 * weights::EXPOSED_BONUS_MULTIPLIER;
     let thoughtful_bonus = thoughtful_reveal_value(transition, from_board);
-    let crit_bonus = critical_path_bonus(transition, from_board);
-    let bucket = successor_bucket(transition, from_board, revealed_delta);
+    let crit_bonus = critical_path_bonus(transition, ordering);
+    let safe = is_safe_foundation_move(transition, from_board);
+    let bucket = successor_bucket(transition, from_board, revealed_delta, safe);
     let secondary = local_secondary_priority(
         transition,
         from_board,
         exposed_bonus + thoughtful_bonus + crit_bonus,
+        safe,
     );
     (bucket, std::cmp::Reverse(secondary))
+}
+
+/// Per-node facts shared by every transition's ordering key, computed once
+/// in `successors()` instead of once per candidate move.
+struct OrderingContext {
+    /// Bit `c` is set when column `c` holds, face-down, the next card of
+    /// some foundation.
+    buried_target_mask: u8,
+}
+
+impl OrderingContext {
+    fn new(board: &KlondikeBoard) -> Self {
+        let mut buried_target_mask = 0u8;
+        for (index, col) in board.columns.iter().enumerate() {
+            let buried = col.cards[..col.face_down_len as usize]
+                .iter()
+                .any(|card| card.value == board.foundation[card.suit as usize] + 1);
+            if buried {
+                buried_target_mask |= 1 << index;
+            }
+        }
+        Self { buried_target_mask }
+    }
 }
 
 fn successor_bucket(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
     revealed_delta: isize,
+    safe_foundation: bool,
 ) -> u8 {
     // Groups with lower indexes are explored first.
     if revealed_delta > 0 {
         return 0;
     }
-    if is_safe_foundation_move(transition, from_board) {
+    if safe_foundation {
         return 1;
     }
     if creates_empty_column(transition, from_board) {
@@ -846,11 +874,12 @@ fn local_secondary_priority(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
     exposed_bonus: i64,
+    safe_foundation: bool,
 ) -> i64 {
     let m = &transition.the_move;
     // Stock macros that fold more advances rank below nearer waste cards.
     let draw_cost = m.stock_advances() as i64 * weights::PRIORITY_DRAW_COST;
-    if is_safe_foundation_move(transition, from_board) {
+    if safe_foundation {
         return weights::PRIORITY_SAFE_FOUNDATION + exposed_bonus;
     }
     if m.is_to_foundation() {
@@ -888,59 +917,52 @@ fn revealed_hidden_delta(transition: &KlondikeTransition, from_board: &KlondikeB
     before.saturating_sub(after) as isize
 }
 
+/// Bonus for the card a move turns face-up. Only the source column of a
+/// tableau move can lose a face-down card, so only that column is inspected.
 fn thoughtful_reveal_value(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
-    let from = from_board;
+    let source = match transition.the_move {
+        KlondikeMove::ColumnToColumn { source, .. }
+        | KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        _ => return 0,
+    };
     let to = &transition.to_board;
-    let mut bonus = 0i64;
-
-    for i in 0..7 {
-        let from_fd = from.columns[i].face_down_len;
-        let to_fd = to.columns[i].face_down_len;
-
-        if from_fd > 0 && to_fd < from_fd && to.columns[i].has_face_up() {
-            let revealed = to.columns[i].cards[to_fd as usize];
-            let target_val = to.foundation[revealed.suit as usize] + 1;
-
-            if target_val <= 13 && revealed.value == target_val {
-                bonus += weights::THOUGHTFUL_REVEAL_TARGET;
-            } else if revealed.value == 13 {
-                let empty_cols = to.columns.iter().filter(|c| c.len == 0).count();
-                if empty_cols > 0 {
-                    bonus += weights::THOUGHTFUL_REVEAL_KING;
-                }
-            } else if target_val <= 13 && revealed.value <= target_val + 2 {
-                bonus += weights::THOUGHTFUL_REVEAL_NEAR_TARGET;
-            }
-        }
+    let from_fd = from_board.columns[source].face_down_len;
+    let to_fd = to.columns[source].face_down_len;
+    if from_fd == 0 || to_fd >= from_fd || !to.columns[source].has_face_up() {
+        return 0;
     }
-    bonus
+
+    let revealed = to.columns[source].cards[to_fd as usize];
+    let target_val = to.foundation[revealed.suit as usize] + 1;
+    if target_val <= 13 && revealed.value == target_val {
+        weights::THOUGHTFUL_REVEAL_TARGET
+    } else if revealed.value == 13 {
+        if to.columns.iter().any(|c| c.len == 0) {
+            weights::THOUGHTFUL_REVEAL_KING
+        } else {
+            0
+        }
+    } else if target_val <= 13 && revealed.value <= target_val + 2 {
+        weights::THOUGHTFUL_REVEAL_NEAR_TARGET
+    } else {
+        0
+    }
 }
 
 /// Bonus for moves that remove cards from a column with a buried target.
 /// The solver knows which cards are face-down; prioritizing blockers from columns
 /// containing the next target of some suit speeds up the critical path to the solution.
-fn critical_path_bonus(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
-    let board = from_board;
+fn critical_path_bonus(transition: &KlondikeTransition, ordering: &OrderingContext) -> i64 {
     let source_col = match transition.the_move {
-        KlondikeMove::ColumnToColumn { source, .. } => source as usize,
-        KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        KlondikeMove::ColumnToColumn { source, .. } => source,
+        KlondikeMove::ColumnToFoundation { source, .. } => source,
         _ => return 0,
     };
-
-    let col = &board.columns[source_col];
-    if col.face_down_len == 0 {
-        return 0;
+    if ordering.buried_target_mask & (1 << source_col) != 0 {
+        weights::CRITICAL_PATH_MOVE_BONUS
+    } else {
+        0
     }
-
-    // Check whether any face-down card in this column is the next target.
-    for pos in 0..(col.face_down_len as usize) {
-        let card = col.cards[pos];
-        let target_val = board.foundation[card.suit as usize] + 1;
-        if card.value == target_val {
-            return weights::CRITICAL_PATH_MOVE_BONUS;
-        }
-    }
-    0
 }
 
 fn creates_empty_column(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> bool {
@@ -1312,7 +1334,8 @@ mod tests {
         ] {
             let transition = transitions.iter().find(|t| t.the_move == m).unwrap();
             assert_eq!(revealed_hidden_delta(transition, &board), 0);
-            assert_ne!(successor_order_key(transition, &board).0, 0);
+            let ordering = OrderingContext::new(&board);
+            assert_ne!(successor_order_key(transition, &board, &ordering).0, 0);
         }
     }
 
@@ -1371,7 +1394,10 @@ mod tests {
             for transition in &transitions {
                 assert!(!is_safe_foundation_move(transition, &board));
                 assert_eq!(revealed_hidden_delta(transition, &board), 1);
-                assert_eq!(critical_path_bonus(transition, &board), 0);
+                assert_eq!(
+                    critical_path_bonus(transition, &OrderingContext::new(&board)),
+                    0
+                );
             }
         }
     }
