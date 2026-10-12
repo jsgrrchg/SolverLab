@@ -19,6 +19,41 @@ struct KlondikeTtKey {
 }
 const TT_UNDO_SENTINEL: u16 = u16::MAX;
 
+/// What the transposition table remembers about a state within a chunk.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct TtEntry {
+    /// Largest remaining budget (`bound - depth`) with which the state was
+    /// already expanded in this chunk. A revisit with no more budget cannot
+    /// find anything new.
+    budget: i64,
+    /// Failed-bound cache: the smallest `f - depth` at which the subtree may
+    /// still succeed, learned when a search below the state came back with
+    /// `NextBound`. Later IDA* iterations skip the subtree until their bound
+    /// reaches `depth + fail_h`, instead of re-expanding it. `i64::MIN` when
+    /// nothing is known. Dead ends (`NextBound(i64::MAX)`) are never cached
+    /// because they may depend on the path (cycle checks).
+    fail_h: i64,
+}
+
+impl TtEntry {
+    const EMPTY: TtEntry = TtEntry {
+        budget: i64::MIN,
+        fail_h: i64::MIN,
+    };
+}
+
+/// Decision for a child state before descending into it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TtVerdict {
+    /// Not seen, or seen with less budget and no cached bound: expand it.
+    Explore,
+    /// Already expanded with at least this budget: contributes nothing.
+    Skip,
+    /// The cached failed bound exceeds the current one: skip the subtree but
+    /// report the f at which it may succeed, so the next iteration can reach it.
+    Bounded(i64),
+}
+
 // ═══════════════════════════════════════════
 // Solver
 // ═══════════════════════════════════════════
@@ -81,26 +116,45 @@ impl KlondikeSolver {
         }
     }
 
-    fn should_prune_by_tt(
-        tt: &AHashMap<KlondikeTtKey, i64>,
+    fn tt_verdict(
+        tt: &AHashMap<KlondikeTtKey, TtEntry>,
         key: KlondikeTtKey,
         remaining_budget: i64,
-    ) -> bool {
-        if let Some(&stored) = tt.get(&key) {
-            stored >= remaining_budget
-        } else {
-            false
+        next_depth: usize,
+        bound: i64,
+    ) -> TtVerdict {
+        let Some(entry) = tt.get(&key) else {
+            return TtVerdict::Explore;
+        };
+        if entry.budget >= remaining_budget {
+            return TtVerdict::Skip;
         }
+        if entry.fail_h != i64::MIN {
+            let f = next_depth as i64 + entry.fail_h;
+            if f > bound {
+                return TtVerdict::Bounded(f);
+            }
+        }
+        TtVerdict::Explore
     }
 
     fn upsert_remaining_budget(
-        tt: &mut AHashMap<KlondikeTtKey, i64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
         key: KlondikeTtKey,
         remaining_budget: i64,
     ) {
-        let entry = tt.entry(key).or_insert(i64::MIN);
-        if remaining_budget > *entry {
-            *entry = remaining_budget;
+        let entry = tt.entry(key).or_insert(TtEntry::EMPTY);
+        if remaining_budget > entry.budget {
+            entry.budget = remaining_budget;
+        }
+    }
+
+    /// Records that the subtree below `key` cannot succeed before
+    /// `depth + fail_h`. Keeps the strongest bound seen.
+    fn upsert_fail_h(tt: &mut AHashMap<KlondikeTtKey, TtEntry>, key: KlondikeTtKey, fail_h: i64) {
+        let entry = tt.entry(key).or_insert(TtEntry::EMPTY);
+        if fail_h > entry.fail_h {
+            entry.fail_h = fail_h;
         }
     }
 
@@ -227,7 +281,7 @@ impl KlondikeSolver {
             let start_score = chunk_eval.progress_score();
             context.reset_chunk_locals(&current_board, start_score);
 
-            let mut tt: AHashMap<KlondikeTtKey, i64> = AHashMap::new();
+            let mut tt: AHashMap<KlondikeTtKey, TtEntry> = AHashMap::new();
             let mut bound =
                 BoardEval::from_board_fast(&current_board, self.draw_advance).heuristic_cost();
             let mut chunk_solution = None;
@@ -301,8 +355,21 @@ impl KlondikeSolver {
 
                     let next_remaining_budget = bound - next_depth as i64;
                     let next_tt_key = self.tt_key(next_signature, initial_undo);
-                    if Self::should_prune_by_tt(&tt, next_tt_key, next_remaining_budget) {
-                        continue;
+                    match Self::tt_verdict(
+                        &tt,
+                        next_tt_key,
+                        next_remaining_budget,
+                        next_depth,
+                        bound,
+                    ) {
+                        TtVerdict::Explore => {}
+                        TtVerdict::Skip => continue,
+                        TtVerdict::Bounded(f) => {
+                            if f < min_next_bound {
+                                min_next_bound = f;
+                            }
+                            continue;
+                        }
                     }
 
                     path_signatures.insert(next_signature);
@@ -527,11 +594,14 @@ impl KlondikeSolver {
         path: &mut Vec<KlondikeMove>,
         undo_count: usize,
         path_signatures: &mut AHashSet<u64>,
-        tt: &mut AHashMap<KlondikeTtKey, i64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
         context: &mut IdaContext,
     ) -> IdaSearchResult {
         let restore_path_len = path.len();
-        let mut chain_signatures = Vec::new();
+        let entry_key = self.tt_key(board.signature, undo_count);
+        let entry_depth = depth;
+        // Safe foundation chain compressed into this call: (signature, depth).
+        let mut chain_nodes: Vec<(u64, usize)> = Vec::new();
         let mut chain_board;
         let mut board = board;
         let mut depth = depth;
@@ -576,14 +646,17 @@ impl KlondikeSolver {
                 // A safe foundation step never consumes an undo. Check every
                 // intermediate signature and TT entry before extending the path.
                 let key = self.tt_key(next_signature, undo_count);
-                if path_signatures.contains(&next_signature)
-                    || Self::should_prune_by_tt(tt, key, next_remaining_budget)
-                {
+                if path_signatures.contains(&next_signature) {
                     break IdaSearchResult::NextBound(i64::MAX);
+                }
+                match Self::tt_verdict(tt, key, next_remaining_budget, next_depth, bound) {
+                    TtVerdict::Explore => {}
+                    TtVerdict::Skip => break IdaSearchResult::NextBound(i64::MAX),
+                    TtVerdict::Bounded(f) => break IdaSearchResult::NextBound(f),
                 }
                 Self::upsert_remaining_budget(tt, key, next_remaining_budget);
                 path_signatures.insert(next_signature);
-                chain_signatures.push(next_signature);
+                chain_nodes.push((next_signature, next_depth));
                 path.push(transition.the_move);
                 context.consider_progress(&transition.to_board, path);
                 chain_board = transition.to_board;
@@ -617,8 +690,15 @@ impl KlondikeSolver {
                 }
 
                 let next_tt_key = self.tt_key(next_signature, next_undo_count);
-                if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
-                    continue;
+                match Self::tt_verdict(tt, next_tt_key, next_remaining_budget, next_depth, bound) {
+                    TtVerdict::Explore => {}
+                    TtVerdict::Skip => continue,
+                    TtVerdict::Bounded(f) => {
+                        if f < min_next_bound {
+                            min_next_bound = f;
+                        }
+                        continue;
+                    }
                 }
 
                 Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
@@ -653,10 +733,22 @@ impl KlondikeSolver {
             }
             break IdaSearchResult::NextBound(min_next_bound);
         };
-        if matches!(result, IdaSearchResult::NextBound(_)) {
+        if let IdaSearchResult::NextBound(next_bound) = result {
             path.truncate(restore_path_len);
-            for signature in chain_signatures {
+            for &(signature, _) in &chain_nodes {
                 path_signatures.remove(&signature);
+            }
+            // Failed-bound cache: this subtree (and every chain node inside
+            // it, whose subtree is a subset) cannot succeed below next_bound.
+            if next_bound != i64::MAX {
+                Self::upsert_fail_h(tt, entry_key, next_bound - entry_depth as i64);
+                for &(signature, chain_depth) in &chain_nodes {
+                    Self::upsert_fail_h(
+                        tt,
+                        self.tt_key(signature, undo_count),
+                        next_bound - chain_depth as i64,
+                    );
+                }
             }
         }
         result

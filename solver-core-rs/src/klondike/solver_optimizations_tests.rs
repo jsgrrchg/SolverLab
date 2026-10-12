@@ -312,7 +312,41 @@ impl KlondikeSolver {
         path: &mut Vec<KlondikeMove>,
         undo_count: usize,
         path_signatures: &mut AHashSet<u64>,
-        tt: &mut AHashMap<KlondikeTtKey, i64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
+        context: &mut IdaContext,
+    ) -> IdaSearchResult {
+        let result = self.search_primitive_reference_inner(
+            board,
+            depth,
+            bound,
+            path,
+            undo_count,
+            path_signatures,
+            tt,
+            context,
+        );
+        // Failed-bound cache, one node per call: mirrors search_with_bound.
+        if let IdaSearchResult::NextBound(next_bound) = result {
+            if next_bound != i64::MAX {
+                Self::upsert_fail_h(
+                    tt,
+                    self.tt_key(board.signature, undo_count),
+                    next_bound - depth as i64,
+                );
+            }
+        }
+        result
+    }
+
+    fn search_primitive_reference_inner(
+        &self,
+        board: &KlondikeBoard,
+        depth: usize,
+        bound: i64,
+        path: &mut Vec<KlondikeMove>,
+        undo_count: usize,
+        path_signatures: &mut AHashSet<u64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
         context: &mut IdaContext,
     ) -> IdaSearchResult {
         if context.should_timeout() {
@@ -365,8 +399,15 @@ impl KlondikeSolver {
             }
 
             let next_tt_key = self.tt_key(next_signature, next_undo_count);
-            if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
-                continue;
+            match Self::tt_verdict(tt, next_tt_key, next_remaining_budget, next_depth, bound) {
+                TtVerdict::Explore => {}
+                TtVerdict::Skip => continue,
+                TtVerdict::Bounded(f) => {
+                    if f < min_next_bound {
+                        min_next_bound = f;
+                    }
+                    continue;
+                }
             }
 
             Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
@@ -420,7 +461,7 @@ struct SearchSnapshot {
     result: IdaSearchResult,
     path: Vec<KlondikeMove>,
     signatures: Vec<u64>,
-    tt: Vec<(u64, u16, i64)>,
+    tt: Vec<(u64, u16, i64, i64)>,
     checked: u64,
     checkpoint: u64,
     samples: u64,
@@ -505,7 +546,9 @@ fn safe_chains_match_primitive_search_at_every_intermediate_cut_and_branch() {
                     signatures.sort_unstable();
                     let mut tt: Vec<_> = tt
                         .into_iter()
-                        .map(|(key, value)| (key.signature, key.undo_bucket, value))
+                        .map(|(key, value)| {
+                            (key.signature, key.undo_bucket, value.budget, value.fail_h)
+                        })
                         .collect();
                     tt.sort_unstable();
                     SearchSnapshot {
@@ -536,6 +579,115 @@ fn safe_chains_match_primitive_search_at_every_intermediate_cut_and_branch() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn failed_bound_cache_skips_revisits_until_the_bound_reaches_them() {
+    // Root: one safe move (3♣ to foundation) whose child has a larger f than
+    // the root bound because the foundation imbalance grows.
+    let mut board = KlondikeBoard::new();
+    board.foundation = [2, 2, 2, 0];
+    board.columns[0].push(Card::new(Suit::Club, 4), true);
+    board.columns[0].push(Card::new(Suit::Club, 3), false);
+    board.columns[1].push(Card::new(Suit::Spade, 10), true);
+    board.columns[1].push(Card::new(Suit::Diamond, 11), false);
+    board.stock[0] = Card::new(Suit::Spade, 9);
+    board.stock_len = 1;
+    board.compute_signature();
+    for draw in [1, 3] {
+        let solver = KlondikeSolver::new(draw);
+        let child = solver.successors(&board, None, 0).remove(0).to_board;
+        let bound = BoardEval::from_board_fast(&board, draw as u8).heuristic_cost();
+        let next_f = 1 + BoardEval::from_board_fast(&child, draw as u8).heuristic_cost();
+        assert!(
+            next_f >= bound + 2,
+            "fixture must leave room for a larger bound"
+        );
+        let root_key = solver.tt_key(board.signature, 0);
+        let child_key = solver.tt_key(child.signature, 0);
+        let mut tt = AHashMap::new();
+
+        // First iteration: the chain step fails its f check and both nodes
+        // learn the bound at which the subtree may succeed.
+        let mut ctx = context(draw as u8);
+        let mut signatures = AHashSet::from_iter([board.signature]);
+        let result = solver.search_with_bound(
+            &board,
+            0,
+            bound,
+            &mut vec![],
+            0,
+            &mut signatures,
+            &mut tt,
+            &mut ctx,
+        );
+        assert_eq!(result, IdaSearchResult::NextBound(next_f));
+        assert_eq!(ctx.checked_nodes, 2);
+        assert_eq!(tt[&root_key].fail_h, next_f);
+        assert_eq!(tt[&child_key].budget, bound - 1);
+        assert_eq!(tt[&child_key].fail_h, next_f - 1);
+
+        // Verdicts: same budget skips; more budget below the cached bound is
+        // skipped but reported; once the bound reaches it, explore again.
+        assert_eq!(
+            KlondikeSolver::tt_verdict(&tt, child_key, bound - 1, 1, bound),
+            TtVerdict::Skip
+        );
+        assert_eq!(
+            KlondikeSolver::tt_verdict(&tt, child_key, next_f - 2, 1, next_f - 1),
+            TtVerdict::Bounded(next_f)
+        );
+        assert_eq!(
+            KlondikeSolver::tt_verdict(&tt, child_key, next_f - 1, 1, next_f),
+            TtVerdict::Explore
+        );
+        assert_eq!(
+            KlondikeSolver::tt_verdict(&tt, solver.tt_key(0xDEAD, 0), 0, 1, 0),
+            TtVerdict::Explore
+        );
+
+        // Second iteration with a larger bound that still falls short: the
+        // child is not re-expanded, only the root is charged, and the result
+        // still tells the caller where the next bound is.
+        let mut ctx = context(draw as u8);
+        let mut signatures = AHashSet::from_iter([board.signature]);
+        let mut path = vec![];
+        let result = solver.search_with_bound(
+            &board,
+            0,
+            next_f - 1,
+            &mut path,
+            0,
+            &mut signatures,
+            &mut tt,
+            &mut ctx,
+        );
+        assert_eq!(result, IdaSearchResult::NextBound(next_f));
+        assert_eq!(ctx.checked_nodes, 1);
+        assert!(path.is_empty());
+        assert_eq!(signatures, AHashSet::from_iter([board.signature]));
+        assert_eq!(
+            tt[&child_key].budget,
+            bound - 1,
+            "a skipped child is not re-recorded"
+        );
+
+        // Third iteration at the cached bound: the child is expanded again.
+        let mut ctx = context(draw as u8);
+        let mut signatures = AHashSet::from_iter([board.signature]);
+        let _ = solver.search_with_bound(
+            &board,
+            0,
+            next_f,
+            &mut vec![],
+            0,
+            &mut signatures,
+            &mut tt,
+            &mut ctx,
+        );
+        assert!(ctx.checked_nodes >= 2);
+        assert_eq!(tt[&child_key].budget, next_f - 1);
     }
 }
 
