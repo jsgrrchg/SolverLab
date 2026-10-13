@@ -1,5 +1,6 @@
 use super::board::KlondikeBoard;
 use super::moves::KlondikeMove;
+use crate::common::card::Card;
 
 // ═══════════════════════════════════════════
 // Board transition
@@ -43,10 +44,13 @@ pub enum KlondikeRule {
     /// Prevents unproductive King moves to empty columns.
     KingToEmptyMustExpose,
 
-    /// Only allows returning a card from a foundation to the tableau if the move
-    /// increases the total number of face-up cards in the tableau.
-    /// Prevents purely destructive foundation undos.
-    FoundationRollback,
+    /// Only allows returning a card from a foundation to the tableau when some
+    /// visible card could then be placed on it: a face-up card in another
+    /// column, or the current waste card, of rank - 1 and opposite color.
+    /// Aces never come back. Without a receiver the rollback only spends nodes
+    /// and undos. (The previous face-up count comparison never pruned: the
+    /// returned card itself always added one face-up card.)
+    FoundationRollbackNeedsReceiver,
 }
 
 impl KlondikeRule {
@@ -137,20 +141,40 @@ impl KlondikeRule {
                 !exposes_hidden
             }
 
+            KlondikeRule::FoundationRollbackNeedsReceiver => {
+                let (destination, card) = match the_move {
+                    KlondikeMove::FoundationToColumn { destination, card } => (destination, card),
+                    _ => return false,
+                };
+                if card.value <= 1 {
+                    return true;
+                }
+                let fits = |c: Card| c.value == card.value - 1 && c.color() != card.color();
+                let in_tableau = board
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != destination as usize)
+                    .any(|(_, column)| column.face_up_cards().iter().any(|&c| fits(c)));
+                let in_waste = board.stock_pile_card().is_some_and(fits);
+                !(in_tableau || in_waste)
+            }
+
             _ => false,
         }
     }
 
     /// Rule set for Fast mode: includes all heuristic pruning rules
-    /// (`KingToEmptyMustExpose`, `FoundationRollback`) that aggressively reduce
-    /// the search space at the cost of not exploring some uncommon paths.
+    /// (`KingToEmptyMustExpose`, `FoundationRollbackNeedsReceiver`) that
+    /// aggressively reduce the search space at the cost of not exploring some
+    /// uncommon paths.
     pub fn default_rules_fast(max_depth: usize) -> Vec<KlondikeRule> {
         vec![
             KlondikeRule::DepthLimit { max_depth },
             KlondikeRule::NoImmediateUndo,
             KlondikeRule::NoopTransition,
             KlondikeRule::KingToEmptyMustExpose,
-            KlondikeRule::FoundationRollback,
+            KlondikeRule::FoundationRollbackNeedsReceiver,
         ]
     }
 
@@ -168,8 +192,9 @@ impl KlondikeRule {
     /// Evaluates whether a transition should be pruned by this rule.
     /// Returns `true` if the move should be discarded.
     ///
-    /// Note: `DepthLimit`, `NoImmediateUndo`, and `KingToEmptyMustExpose` are
-    /// evaluated in `can_prune_early()` before `apply()`. They return `false` here.
+    /// Note: `DepthLimit`, `NoImmediateUndo`, `KingToEmptyMustExpose` and
+    /// `FoundationRollbackNeedsReceiver` are evaluated in `can_prune_early()`
+    /// before `apply()`. They return `false` here.
     pub fn should_prune(
         &self,
         transition: &KlondikeTransition,
@@ -179,27 +204,11 @@ impl KlondikeRule {
             // Evaluated in can_prune_early; they do not reach this point.
             KlondikeRule::DepthLimit { .. }
             | KlondikeRule::NoImmediateUndo
-            | KlondikeRule::KingToEmptyMustExpose => false,
+            | KlondikeRule::KingToEmptyMustExpose
+            | KlondikeRule::FoundationRollbackNeedsReceiver => false,
 
             // Noop pruning: the board did not change after the move.
             KlondikeRule::NoopTransition => *from_board == transition.to_board,
-
-            // Foundation rollback pruning: only allow returning a foundation card
-            // to the tableau if the result has more face-up cards than the previous state.
-            KlondikeRule::FoundationRollback => {
-                if !transition.the_move.is_from_foundation() {
-                    return false;
-                }
-                let before_exposure: usize =
-                    from_board.columns.iter().map(|c| c.num_face_up()).sum();
-                let after_exposure: usize = transition
-                    .to_board
-                    .columns
-                    .iter()
-                    .map(|c| c.num_face_up())
-                    .sum();
-                after_exposure <= before_exposure
-            }
         }
     }
 }
@@ -216,7 +225,7 @@ mod tests {
     fn has_foundation_rollback(rules: &[KlondikeRule]) -> bool {
         rules
             .iter()
-            .any(|r| matches!(r, KlondikeRule::FoundationRollback))
+            .any(|r| matches!(r, KlondikeRule::FoundationRollbackNeedsReceiver))
     }
 
     fn has_king_to_empty_must_expose(rules: &[KlondikeRule]) -> bool {
@@ -287,6 +296,69 @@ mod tests {
 
         assert!(!has_foundation_rollback(&strict));
         assert!(!has_king_to_empty_must_expose(&strict));
+    }
+
+    /// A foundation rollback is only worth exploring when a visible card could
+    /// be placed on the returned card.
+    #[test]
+    fn foundation_rollback_requires_a_visible_receiver() {
+        let rule = KlondikeRule::FoundationRollbackNeedsReceiver;
+        let rollback = KlondikeMove::FoundationToColumn {
+            destination: 0,
+            card: Card::new(Suit::Heart, 7),
+        };
+
+        // Column 0 can receive the 7♥ (8♣ on top); nothing visible fits on a 7♥.
+        let mut board = KlondikeBoard::new();
+        board.foundation[Suit::Heart as usize] = 7;
+        board.columns[0].push(Card::new(Suit::Club, 8), false);
+        board.columns[1].push(Card::new(Suit::Spade, 9), true);
+        board.columns[1].push(Card::new(Suit::Heart, 6), false); // same color: does not fit
+        board.columns[2].push(Card::new(Suit::Club, 5), false); // wrong rank
+        board.stock[0] = Card::new(Suit::Club, 6);
+        board.stock_len = 1;
+        board.stock_index = 0; // not yet in the waste
+        board.compute_signature();
+        assert!(rule.can_prune_early(&board, rollback, None, 1));
+
+        // A black six face up in another column is a receiver, even if it is
+        // not the top card of its run.
+        let mut with_tableau_receiver = board;
+        with_tableau_receiver.columns[3].push(Card::new(Suit::Spade, 6), false);
+        with_tableau_receiver.columns[3].push(Card::new(Suit::Diamond, 5), false);
+        assert!(!rule.can_prune_early(&with_tableau_receiver, rollback, None, 1));
+
+        // A receiver sitting in the destination column itself does not count.
+        let mut receiver_in_destination = board;
+        receiver_in_destination.columns[0].push(Card::new(Suit::Spade, 6), false);
+        assert!(rule.can_prune_early(&receiver_in_destination, rollback, None, 1));
+
+        // The current waste card is a receiver too.
+        let mut with_waste_receiver = board;
+        with_waste_receiver.stock_index = 1; // 6♣ becomes the waste card
+        assert!(!rule.can_prune_early(&with_waste_receiver, rollback, None, 1));
+
+        // Aces never return to the tableau.
+        let ace_back = KlondikeMove::FoundationToColumn {
+            destination: 0,
+            card: Card::new(Suit::Spade, 1),
+        };
+        assert!(rule.can_prune_early(&board, ace_back, None, 1));
+
+        // Other move kinds are never pruned by this rule, and nothing reaches should_prune.
+        let other = KlondikeMove::ColumnToColumn {
+            source: 2,
+            destination: 0,
+            count: 1,
+        };
+        assert!(!rule.can_prune_early(&board, other, None, 1));
+        let transition = KlondikeTransition {
+            to_board: rollback.apply(board).unwrap(),
+            the_move: rollback,
+            previous_move: None,
+            depth: 1,
+        };
+        assert!(!rule.should_prune(&transition, &board));
     }
 
     /// Verifies that KingToEmptyMustExpose allows the move when it exposes a

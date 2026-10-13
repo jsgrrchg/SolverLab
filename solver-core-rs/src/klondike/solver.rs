@@ -19,6 +19,41 @@ struct KlondikeTtKey {
 }
 const TT_UNDO_SENTINEL: u16 = u16::MAX;
 
+/// What the transposition table remembers about a state within a chunk.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct TtEntry {
+    /// Largest remaining budget (`bound - depth`) with which the state was
+    /// already expanded in this chunk. A revisit with no more budget cannot
+    /// find anything new.
+    budget: i64,
+    /// Failed-bound cache: the smallest `f - depth` at which the subtree may
+    /// still succeed, learned when a search below the state came back with
+    /// `NextBound`. Later IDA* iterations skip the subtree until their bound
+    /// reaches `depth + fail_h`, instead of re-expanding it. `i64::MIN` when
+    /// nothing is known. Dead ends (`NextBound(i64::MAX)`) are never cached
+    /// because they may depend on the path (cycle checks).
+    fail_h: i64,
+}
+
+impl TtEntry {
+    const EMPTY: TtEntry = TtEntry {
+        budget: i64::MIN,
+        fail_h: i64::MIN,
+    };
+}
+
+/// Decision for a child state before descending into it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TtVerdict {
+    /// Not seen, or seen with less budget and no cached bound: expand it.
+    Explore,
+    /// Already expanded with at least this budget: contributes nothing.
+    Skip,
+    /// The cached failed bound exceeds the current one: skip the subtree but
+    /// report the f at which it may succeed, so the next iteration can reach it.
+    Bounded(i64),
+}
+
 // ═══════════════════════════════════════════
 // Solver
 // ═══════════════════════════════════════════
@@ -37,6 +72,7 @@ pub struct KlondikeSolver {
 }
 
 pub struct KlondikeSolveStats {
+    /// Primitive moves only; stock macros are expanded before returning.
     pub moves: Option<Vec<KlondikeMove>>,
     pub checkpoints_adopted: u32,
 }
@@ -80,26 +116,45 @@ impl KlondikeSolver {
         }
     }
 
-    fn should_prune_by_tt(
-        tt: &AHashMap<KlondikeTtKey, i64>,
+    fn tt_verdict(
+        tt: &AHashMap<KlondikeTtKey, TtEntry>,
         key: KlondikeTtKey,
         remaining_budget: i64,
-    ) -> bool {
-        if let Some(&stored) = tt.get(&key) {
-            stored >= remaining_budget
-        } else {
-            false
+        next_depth: usize,
+        bound: i64,
+    ) -> TtVerdict {
+        let Some(entry) = tt.get(&key) else {
+            return TtVerdict::Explore;
+        };
+        if entry.budget >= remaining_budget {
+            return TtVerdict::Skip;
         }
+        if entry.fail_h != i64::MIN {
+            let f = next_depth as i64 + entry.fail_h;
+            if f > bound {
+                return TtVerdict::Bounded(f);
+            }
+        }
+        TtVerdict::Explore
     }
 
     fn upsert_remaining_budget(
-        tt: &mut AHashMap<KlondikeTtKey, i64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
         key: KlondikeTtKey,
         remaining_budget: i64,
     ) {
-        let entry = tt.entry(key).or_insert(i64::MIN);
-        if remaining_budget > *entry {
-            *entry = remaining_budget;
+        let entry = tt.entry(key).or_insert(TtEntry::EMPTY);
+        if remaining_budget > entry.budget {
+            entry.budget = remaining_budget;
+        }
+    }
+
+    /// Records that the subtree below `key` cannot succeed before
+    /// `depth + fail_h`. Keeps the strongest bound seen.
+    fn upsert_fail_h(tt: &mut AHashMap<KlondikeTtKey, TtEntry>, key: KlondikeTtKey, fail_h: i64) {
+        let entry = tt.entry(key).or_insert(TtEntry::EMPTY);
+        if fail_h > entry.fail_h {
+            entry.fail_h = fail_h;
         }
     }
 
@@ -112,6 +167,7 @@ impl KlondikeSolver {
         depth: usize,
     ) -> Vec<KlondikeTransition> {
         let candidate_moves = KlondikeMove::find_candidate_moves(board, self.draw_advance);
+        // Safe foundation moves are always primitive: one step deeper.
         let next_depth = depth + 1;
 
         // Fast path: detect safe foundation moves without copying boards.
@@ -148,12 +204,15 @@ impl KlondikeSolver {
         let mut transitions = Vec::with_capacity(candidate_moves.len());
 
         for the_move in candidate_moves {
+            // A stock macro is one node but several primitive steps deep, so the
+            // depth limit and the IDA* g cost see the same depth as primitives.
+            let move_depth = depth + the_move.primitive_len();
             // Early pruning: evaluate rules that do not need to_board before
             // copying the board and computing the signature.
             if self
                 .rules
                 .iter()
-                .any(|r| r.can_prune_early(board, the_move, previous_move, next_depth))
+                .any(|r| r.can_prune_early(board, the_move, previous_move, move_depth))
             {
                 continue;
             }
@@ -162,7 +221,7 @@ impl KlondikeSolver {
                     to_board: next_board,
                     the_move,
                     previous_move,
-                    depth: next_depth,
+                    depth: move_depth,
                 };
                 if !self
                     .rules
@@ -174,7 +233,8 @@ impl KlondikeSolver {
             }
         }
 
-        transitions.sort_by_cached_key(|t| successor_order_key(t, board));
+        let ordering = OrderingContext::new(board);
+        transitions.sort_by_cached_key(|t| successor_order_key(t, board, &ordering));
         transitions
     }
 
@@ -221,7 +281,7 @@ impl KlondikeSolver {
             let start_score = chunk_eval.progress_score();
             context.reset_chunk_locals(&current_board, start_score);
 
-            let mut tt: AHashMap<KlondikeTtKey, i64> = AHashMap::new();
+            let mut tt: AHashMap<KlondikeTtKey, TtEntry> = AHashMap::new();
             let mut bound =
                 BoardEval::from_board_fast(&current_board, self.draw_advance).heuristic_cost();
             let mut chunk_solution = None;
@@ -280,6 +340,7 @@ impl KlondikeSolver {
                     let mut path = vec![transition.the_move];
                     let next_board = transition.to_board;
                     let next_signature = next_board.signature;
+                    let next_depth = transition.depth;
                     let initial_undo = if transition.the_move.is_from_foundation() {
                         1
                     } else {
@@ -292,10 +353,23 @@ impl KlondikeSolver {
                         }
                     }
 
-                    let next_remaining_budget = bound - 1;
+                    let next_remaining_budget = bound - next_depth as i64;
                     let next_tt_key = self.tt_key(next_signature, initial_undo);
-                    if Self::should_prune_by_tt(&tt, next_tt_key, next_remaining_budget) {
-                        continue;
+                    match Self::tt_verdict(
+                        &tt,
+                        next_tt_key,
+                        next_remaining_budget,
+                        next_depth,
+                        bound,
+                    ) {
+                        TtVerdict::Explore => {}
+                        TtVerdict::Skip => continue,
+                        TtVerdict::Bounded(f) => {
+                            if f < min_next_bound {
+                                min_next_bound = f;
+                            }
+                            continue;
+                        }
                     }
 
                     path_signatures.insert(next_signature);
@@ -304,7 +378,7 @@ impl KlondikeSolver {
 
                     let result = self.search_with_bound(
                         &next_board,
-                        1,
+                        next_depth,
                         bound,
                         &mut path,
                         initial_undo,
@@ -355,7 +429,7 @@ impl KlondikeSolver {
             if let Some(solution) = chunk_solution {
                 unified_moves.extend(solution);
                 return KlondikeSolveStats {
-                    moves: Some(unified_moves),
+                    moves: Some(self.to_primitive_path(initial_board, unified_moves)),
                     checkpoints_adopted: context.checkpoints_adopted,
                 };
             }
@@ -401,7 +475,7 @@ impl KlondikeSolver {
             }
             if !unified_moves.is_empty() {
                 return KlondikeSolveStats {
-                    moves: Some(unified_moves),
+                    moves: Some(self.to_primitive_path(initial_board, unified_moves)),
                     checkpoints_adopted: context.checkpoints_adopted,
                 };
             }
@@ -410,6 +484,18 @@ impl KlondikeSolver {
             moves: None,
             checkpoints_adopted: context.checkpoints_adopted,
         }
+    }
+
+    /// Expands stock macros into the primitive moves a UI can replay.
+    fn to_primitive_path(
+        &self,
+        initial_board: &KlondikeBoard,
+        moves: Vec<KlondikeMove>,
+    ) -> Vec<KlondikeMove> {
+        if !moves.iter().any(|m| m.is_stock_macro()) {
+            return moves;
+        }
+        super::moves::expand_stock_macros(initial_board, &moves)
     }
 
     /// Finish a valid, fully visible tableau without stock or waste by legal
@@ -508,11 +594,14 @@ impl KlondikeSolver {
         path: &mut Vec<KlondikeMove>,
         undo_count: usize,
         path_signatures: &mut AHashSet<u64>,
-        tt: &mut AHashMap<KlondikeTtKey, i64>,
+        tt: &mut AHashMap<KlondikeTtKey, TtEntry>,
         context: &mut IdaContext,
     ) -> IdaSearchResult {
         let restore_path_len = path.len();
-        let mut chain_signatures = Vec::new();
+        let entry_key = self.tt_key(board.signature, undo_count);
+        let entry_depth = depth;
+        // Safe foundation chain compressed into this call: (signature, depth).
+        let mut chain_nodes: Vec<(u64, usize)> = Vec::new();
         let mut chain_board;
         let mut board = board;
         let mut depth = depth;
@@ -552,19 +641,22 @@ impl KlondikeSolver {
             if transitions.len() == 1 && is_safe_foundation_move(&transitions[0], board) {
                 let transition = transitions.pop().unwrap();
                 let next_signature = transition.to_board.signature;
-                let next_depth = depth + 1;
+                let next_depth = transition.depth;
                 let next_remaining_budget = bound - next_depth as i64;
                 // A safe foundation step never consumes an undo. Check every
                 // intermediate signature and TT entry before extending the path.
                 let key = self.tt_key(next_signature, undo_count);
-                if path_signatures.contains(&next_signature)
-                    || Self::should_prune_by_tt(tt, key, next_remaining_budget)
-                {
+                if path_signatures.contains(&next_signature) {
                     break IdaSearchResult::NextBound(i64::MAX);
+                }
+                match Self::tt_verdict(tt, key, next_remaining_budget, next_depth, bound) {
+                    TtVerdict::Explore => {}
+                    TtVerdict::Skip => break IdaSearchResult::NextBound(i64::MAX),
+                    TtVerdict::Bounded(f) => break IdaSearchResult::NextBound(f),
                 }
                 Self::upsert_remaining_budget(tt, key, next_remaining_budget);
                 path_signatures.insert(next_signature);
-                chain_signatures.push(next_signature);
+                chain_nodes.push((next_signature, next_depth));
                 path.push(transition.the_move);
                 context.consider_progress(&transition.to_board, path);
                 chain_board = transition.to_board;
@@ -579,7 +671,7 @@ impl KlondikeSolver {
             for transition in transitions {
                 let next_board = transition.to_board;
                 let next_signature = next_board.signature;
-                let next_depth = depth + 1;
+                let next_depth = transition.depth;
                 let next_remaining_budget = bound - next_depth as i64;
                 let next_undo_count = if transition.the_move.is_from_foundation() {
                     undo_count + 1
@@ -598,8 +690,15 @@ impl KlondikeSolver {
                 }
 
                 let next_tt_key = self.tt_key(next_signature, next_undo_count);
-                if Self::should_prune_by_tt(tt, next_tt_key, next_remaining_budget) {
-                    continue;
+                match Self::tt_verdict(tt, next_tt_key, next_remaining_budget, next_depth, bound) {
+                    TtVerdict::Explore => {}
+                    TtVerdict::Skip => continue,
+                    TtVerdict::Bounded(f) => {
+                        if f < min_next_bound {
+                            min_next_bound = f;
+                        }
+                        continue;
+                    }
                 }
 
                 Self::upsert_remaining_budget(tt, next_tt_key, next_remaining_budget);
@@ -634,10 +733,22 @@ impl KlondikeSolver {
             }
             break IdaSearchResult::NextBound(min_next_bound);
         };
-        if matches!(result, IdaSearchResult::NextBound(_)) {
+        if let IdaSearchResult::NextBound(next_bound) = result {
             path.truncate(restore_path_len);
-            for signature in chain_signatures {
+            for &(signature, _) in &chain_nodes {
                 path_signatures.remove(&signature);
+            }
+            // Failed-bound cache: this subtree (and every chain node inside
+            // it, whose subtree is a subset) cannot succeed below next_bound.
+            if next_bound != i64::MAX {
+                Self::upsert_fail_h(tt, entry_key, next_bound - entry_depth as i64);
+                for &(signature, chain_depth) in &chain_nodes {
+                    Self::upsert_fail_h(
+                        tt,
+                        self.tt_key(signature, undo_count),
+                        next_bound - chain_depth as i64,
+                    );
+                }
             }
         }
         result
@@ -693,7 +804,7 @@ impl IdaContext {
             solution_path: None,
             adopted_checkpoint_hashes: AHashSet::new(),
             checkpoints_adopted: 0,
-            policy: CheckpointPolicy::default_policy(),
+            policy: CheckpointPolicy::for_draw(draw_advance),
             draw_advance,
         }
     }
@@ -779,31 +890,58 @@ pub fn progress_token(board: &KlondikeBoard) -> String {
 fn successor_order_key(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
+    ordering: &OrderingContext,
 ) -> (u8, std::cmp::Reverse<i64>) {
     // Lexicographic order: group first (move type), then local priority.
     let revealed_delta = revealed_hidden_delta(transition, from_board);
     let exposed_bonus = revealed_delta as i64 * weights::EXPOSED_BONUS_MULTIPLIER;
     let thoughtful_bonus = thoughtful_reveal_value(transition, from_board);
-    let crit_bonus = critical_path_bonus(transition, from_board);
-    let bucket = successor_bucket(transition, from_board, revealed_delta);
+    let crit_bonus = critical_path_bonus(transition, ordering);
+    let safe = is_safe_foundation_move(transition, from_board);
+    let bucket = successor_bucket(transition, from_board, revealed_delta, safe);
     let secondary = local_secondary_priority(
         transition,
         from_board,
         exposed_bonus + thoughtful_bonus + crit_bonus,
+        safe,
     );
     (bucket, std::cmp::Reverse(secondary))
+}
+
+/// Per-node facts shared by every transition's ordering key, computed once
+/// in `successors()` instead of once per candidate move.
+struct OrderingContext {
+    /// Bit `c` is set when column `c` holds, face-down, the next card of
+    /// some foundation.
+    buried_target_mask: u8,
+}
+
+impl OrderingContext {
+    fn new(board: &KlondikeBoard) -> Self {
+        let mut buried_target_mask = 0u8;
+        for (index, col) in board.columns.iter().enumerate() {
+            let buried = col.cards[..col.face_down_len as usize]
+                .iter()
+                .any(|card| card.value == board.foundation[card.suit as usize] + 1);
+            if buried {
+                buried_target_mask |= 1 << index;
+            }
+        }
+        Self { buried_target_mask }
+    }
 }
 
 fn successor_bucket(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
     revealed_delta: isize,
+    safe_foundation: bool,
 ) -> u8 {
     // Groups with lower indexes are explored first.
     if revealed_delta > 0 {
         return 0;
     }
-    if is_safe_foundation_move(transition, from_board) {
+    if safe_foundation {
         return 1;
     }
     if creates_empty_column(transition, from_board) {
@@ -828,13 +966,16 @@ fn local_secondary_priority(
     transition: &KlondikeTransition,
     from_board: &KlondikeBoard,
     exposed_bonus: i64,
+    safe_foundation: bool,
 ) -> i64 {
     let m = &transition.the_move;
-    if is_safe_foundation_move(transition, from_board) {
+    // Stock macros that fold more advances rank below nearer waste cards.
+    let draw_cost = m.stock_advances() as i64 * weights::PRIORITY_DRAW_COST;
+    if safe_foundation {
         return weights::PRIORITY_SAFE_FOUNDATION + exposed_bonus;
     }
     if m.is_to_foundation() {
-        return weights::PRIORITY_TO_FOUNDATION + exposed_bonus;
+        return weights::PRIORITY_TO_FOUNDATION + exposed_bonus - draw_cost;
     }
     if m.is_from_foundation() {
         return weights::PRIORITY_FROM_FOUNDATION;
@@ -843,10 +984,10 @@ fn local_secondary_priority(
         return weights::PRIORITY_STOCK_ADVANCE + exposed_bonus;
     }
     if m.is_stock_recycle() {
-        return weights::PRIORITY_STOCK_RECYCLE;
+        return weights::PRIORITY_STOCK_RECYCLE - draw_cost;
     }
 
-    let mut score = weights::PRIORITY_COLUMN_BASE + exposed_bonus;
+    let mut score = weights::PRIORITY_COLUMN_BASE + exposed_bonus - draw_cost;
     if let KlondikeMove::ColumnToColumn { count, .. } = m {
         score += (*count as i64).saturating_sub(1) * weights::PRIORITY_STACK_BONUS;
         if creates_empty_column(transition, from_board) {
@@ -868,59 +1009,52 @@ fn revealed_hidden_delta(transition: &KlondikeTransition, from_board: &KlondikeB
     before.saturating_sub(after) as isize
 }
 
+/// Bonus for the card a move turns face-up. Only the source column of a
+/// tableau move can lose a face-down card, so only that column is inspected.
 fn thoughtful_reveal_value(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
-    let from = from_board;
+    let source = match transition.the_move {
+        KlondikeMove::ColumnToColumn { source, .. }
+        | KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        _ => return 0,
+    };
     let to = &transition.to_board;
-    let mut bonus = 0i64;
-
-    for i in 0..7 {
-        let from_fd = from.columns[i].face_down_len;
-        let to_fd = to.columns[i].face_down_len;
-
-        if from_fd > 0 && to_fd < from_fd && to.columns[i].has_face_up() {
-            let revealed = to.columns[i].cards[to_fd as usize];
-            let target_val = to.foundation[revealed.suit as usize] + 1;
-
-            if target_val <= 13 && revealed.value == target_val {
-                bonus += weights::THOUGHTFUL_REVEAL_TARGET;
-            } else if revealed.value == 13 {
-                let empty_cols = to.columns.iter().filter(|c| c.len == 0).count();
-                if empty_cols > 0 {
-                    bonus += weights::THOUGHTFUL_REVEAL_KING;
-                }
-            } else if target_val <= 13 && revealed.value <= target_val + 2 {
-                bonus += weights::THOUGHTFUL_REVEAL_NEAR_TARGET;
-            }
-        }
+    let from_fd = from_board.columns[source].face_down_len;
+    let to_fd = to.columns[source].face_down_len;
+    if from_fd == 0 || to_fd >= from_fd || !to.columns[source].has_face_up() {
+        return 0;
     }
-    bonus
+
+    let revealed = to.columns[source].cards[to_fd as usize];
+    let target_val = to.foundation[revealed.suit as usize] + 1;
+    if target_val <= 13 && revealed.value == target_val {
+        weights::THOUGHTFUL_REVEAL_TARGET
+    } else if revealed.value == 13 {
+        if to.columns.iter().any(|c| c.len == 0) {
+            weights::THOUGHTFUL_REVEAL_KING
+        } else {
+            0
+        }
+    } else if target_val <= 13 && revealed.value <= target_val + 2 {
+        weights::THOUGHTFUL_REVEAL_NEAR_TARGET
+    } else {
+        0
+    }
 }
 
 /// Bonus for moves that remove cards from a column with a buried target.
 /// The solver knows which cards are face-down; prioritizing blockers from columns
 /// containing the next target of some suit speeds up the critical path to the solution.
-fn critical_path_bonus(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> i64 {
-    let board = from_board;
+fn critical_path_bonus(transition: &KlondikeTransition, ordering: &OrderingContext) -> i64 {
     let source_col = match transition.the_move {
-        KlondikeMove::ColumnToColumn { source, .. } => source as usize,
-        KlondikeMove::ColumnToFoundation { source, .. } => source as usize,
+        KlondikeMove::ColumnToColumn { source, .. } => source,
+        KlondikeMove::ColumnToFoundation { source, .. } => source,
         _ => return 0,
     };
-
-    let col = &board.columns[source_col];
-    if col.face_down_len == 0 {
-        return 0;
+    if ordering.buried_target_mask & (1 << source_col) != 0 {
+        weights::CRITICAL_PATH_MOVE_BONUS
+    } else {
+        0
     }
-
-    // Check whether any face-down card in this column is the next target.
-    for pos in 0..(col.face_down_len as usize) {
-        let card = col.cards[pos];
-        let target_val = board.foundation[card.suit as usize] + 1;
-        if card.value == target_val {
-            return weights::CRITICAL_PATH_MOVE_BONUS;
-        }
-    }
-    0
 }
 
 fn creates_empty_column(transition: &KlondikeTransition, from_board: &KlondikeBoard) -> bool {
@@ -1101,6 +1235,9 @@ mod tests {
             board.foundation[Suit::Heart as usize] = 6;
             board.columns[0].push(card(Suit::Club, 8), hidden);
             board.columns[0].push(card(Suit::Heart, 7), false);
+            // A visible black six keeps the rollback past FoundationRollbackNeedsReceiver.
+            board.columns[1].push(card(Suit::Diamond, 10), true);
+            board.columns[1].push(card(Suit::Spade, 6), false);
             complete_inverse_fixture(&mut board);
             let forward = KlondikeMove::ColumnToFoundation {
                 source: 0,
@@ -1205,6 +1342,8 @@ mod tests {
         board.columns[0].push(card(Suit::Heart, 5), false);
         board.columns[1].push(card(Suit::Club, 6), false);
         board.columns[2].push(card(Suit::Spade, 5), false);
+        // A visible black three lets the 4♥ rollback past FoundationRollbackNeedsReceiver.
+        board.columns[3].push(card(Suit::Club, 3), false);
         board.stock[0] = card(Suit::Diamond, 5);
         board.stock[1] = card(Suit::Spade, 9);
         board.stock_len = 2;
@@ -1233,20 +1372,25 @@ mod tests {
             let solver = KlondikeSolver::new(draw);
             let transitions = solver.successors(&board, None, 0);
             let position = |m| transitions.iter().position(|t| t.the_move == m).unwrap();
-            let advance = KlondikeMove::StockPileAdvance {
-                beginning_index: 1,
+            // 9♠ is reachable but has no destination, so the only stock macro is
+            // the recycle; pure advances are never generated.
+            let recycle = KlondikeMove::StockDrawRecycle {
+                advances: 1,
                 increment: draw as u8,
             };
+            assert!(!transitions.iter().any(|t| t.the_move.is_stock_advance()));
 
-            assert!(position(foundation_reveal) < position(advance));
-            assert!(position(column_reveal) < position(advance));
-            assert!(position(advance) < position(stock_transfer));
-            assert!(position(advance) < position(foundation_transfer));
+            for reveal in [foundation_reveal, column_reveal] {
+                assert!(position(reveal) < position(stock_transfer));
+                assert!(position(reveal) < position(foundation_transfer));
+            }
+            assert!(position(stock_transfer) < position(recycle));
+            assert!(position(foundation_transfer) < position(recycle));
 
             for m in [foundation_reveal, column_reveal] {
                 assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 1);
             }
-            for m in [stock_transfer, foundation_transfer, advance] {
+            for m in [stock_transfer, foundation_transfer, recycle] {
                 assert_eq!(revealed_hidden_delta(&transitions[position(m)], &board), 0);
             }
 
@@ -1282,7 +1426,8 @@ mod tests {
         ] {
             let transition = transitions.iter().find(|t| t.the_move == m).unwrap();
             assert_eq!(revealed_hidden_delta(transition, &board), 0);
-            assert_ne!(successor_order_key(transition, &board).0, 0);
+            let ordering = OrderingContext::new(&board);
+            assert_ne!(successor_order_key(transition, &board, &ordering).0, 0);
         }
     }
 
@@ -1341,7 +1486,124 @@ mod tests {
             for transition in &transitions {
                 assert!(!is_safe_foundation_move(transition, &board));
                 assert_eq!(revealed_hidden_delta(transition, &board), 1);
-                assert_eq!(critical_path_bonus(transition, &board), 0);
+                assert_eq!(
+                    critical_path_bonus(transition, &OrderingContext::new(&board)),
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn macro_successors_charge_primitive_depth_and_replace_advances() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        board.foundation[Suit::Club as usize] = 4;
+        for (i, c) in [
+            card(Suit::Club, 9),
+            card(Suit::Diamond, 2),
+            card(Suit::Spade, 7),
+            card(Suit::Heart, 3),
+            card(Suit::Diamond, 4),
+            card(Suit::Club, 5),
+            card(Suit::Spade, 10),
+            card(Suit::Club, 7),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            board.stock[i] = c;
+        }
+        board.stock_len = 8;
+        board.compute_signature();
+
+        let solver = KlondikeSolver::new(3);
+        let transitions = solver.successors(&board, None, 4);
+        assert!(!transitions.is_empty());
+        assert!(!transitions.iter().any(|t| t.the_move.is_stock_advance()));
+        let mut seen_macro = false;
+        for t in &transitions {
+            let advances = t.the_move.stock_advances() as usize;
+            seen_macro |= advances > 0;
+            assert_eq!(t.depth, 4 + 1 + advances, "{:?}", t.the_move);
+        }
+        assert!(seen_macro);
+        // Nearer waste cards sort before farther ones of the same kind.
+        let order: Vec<_> = transitions
+            .iter()
+            .filter_map(|t| match t.the_move {
+                KlondikeMove::StockDrawToColumn { advances, .. } => Some(advances),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, vec![1, 3]);
+
+        // The depth limit sees the folded advances.
+        let mut limited = KlondikeSolver::new(3);
+        limited
+            .rules
+            .push(KlondikeRule::DepthLimit { max_depth: 6 });
+        let transitions = limited.successors(&board, None, 4);
+        assert!(transitions.iter().any(|t| t.the_move.stock_advances() == 1));
+        assert!(!transitions.iter().any(|t| t.the_move.stock_advances() >= 2));
+
+        // Draw 1 reaches every stock card; the depth still counts each advance.
+        let draw_one = KlondikeSolver::new(1).successors(&board, None, 4);
+        assert!(!draw_one.iter().any(|t| t.the_move.is_stock_advance()));
+        let farthest = draw_one
+            .iter()
+            .map(|t| t.the_move.stock_advances())
+            .max()
+            .unwrap();
+        assert_eq!(farthest, 8, "7♣ is the last of eight stock cards");
+        for t in &draw_one {
+            assert_eq!(t.depth, 4 + 1 + t.the_move.stock_advances() as usize);
+        }
+    }
+
+    #[test]
+    fn solve_returns_primitive_moves_when_searching_with_stock_macros() {
+        let mut board = KlondikeBoard::new();
+        board.foundation = [11, 13, 13, 13];
+        board.stock[0] = card(Suit::Club, 12);
+        board.stock[1] = card(Suit::Club, 13);
+        board.stock_len = 2;
+        board.compute_signature();
+
+        for draw in [1, 3] {
+            let solver = KlondikeSolver::new(draw);
+            let stats = solver.solve_with_stats(&board, false);
+            let moves = stats.moves.expect("the two clubs are reachable");
+            assert!(moves.iter().all(|m| !m.is_stock_macro()), "{moves:?}");
+            let mut replayed = board;
+            for m in &moves {
+                assert!(
+                    KlondikeMove::find_primitive_moves(&replayed, draw as u8).contains(m),
+                    "{m:?} must be a legal primitive for the UI"
+                );
+                replayed = m.apply(replayed).unwrap();
+            }
+            assert!(KlondikeSolver::is_win(&replayed));
+            // Draw 1 draws Q♣ and plays it. Draw 3 draws both, parks K♣ in a
+            // column, and the waste card beneath (Q♣) is playable at once.
+            // Either way: advance, two stock plays, column to foundation.
+            assert_eq!(moves.len(), 4, "draw {draw}: {moves:?}");
+            assert_eq!(
+                moves[0],
+                KlondikeMove::StockPileAdvance {
+                    beginning_index: 0,
+                    increment: draw as u8,
+                }
+            );
+            if draw == 3 {
+                assert!(matches!(
+                    moves[1],
+                    KlondikeMove::StockPileToColumn { destination: 0, .. }
+                ));
+                assert!(matches!(
+                    moves[2],
+                    KlondikeMove::StockPileToFoundation { .. }
+                ));
             }
         }
     }

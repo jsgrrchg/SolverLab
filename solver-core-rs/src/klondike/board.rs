@@ -154,7 +154,9 @@ pub struct KlondikeBoard {
     pub stock_index: u8,
     /// Number of times the stock has been recycled. Used by optional rules.
     pub stock_recycles: u8,
-    /// FNV-1a hash of the complete state. Used as a transposition table key.
+    /// Zobrist hash of the complete state. Used as a transposition table key.
+    /// Maintained incrementally by `KlondikeMove::apply`; recompute with
+    /// `compute_signature` after editing the board by hand.
     pub signature: u64,
 }
 
@@ -170,7 +172,7 @@ impl KlondikeBoard {
 
     /// Creates an empty board with no cards. Used as the starting point for `deal`.
     pub fn new() -> Self {
-        Self {
+        let mut board = Self {
             columns: [FastColumn::empty(); 7],
             foundation: [0; 4],
             stock: [Card::new(Suit::Club, 0); 24],
@@ -178,7 +180,9 @@ impl KlondikeBoard {
             stock_index: 0,
             stock_recycles: 0,
             signature: 0,
-        }
+        };
+        board.compute_signature();
+        board
     }
 
     // ── Foundation queries ─────────────
@@ -251,83 +255,186 @@ impl KlondikeBoard {
 
     // ── Signature / Hash ────────────────────────
 
-    /// Recomputes the board FNV-1a signature and stores it in `self.signature`.
-    /// Must be called after any board state modification not produced by
-    /// `KlondikeMove::apply` (which does this automatically).
+    /// Recomputes the board Zobrist signature from scratch and stores it in
+    /// `self.signature`. Must be called after any board state modification
+    /// not produced by `KlondikeMove::apply`, which maintains the signature
+    /// incrementally.
     pub fn compute_signature(&mut self) {
         self.signature = klondike_signature(self);
     }
+
+    // ── Incremental state mutation (keeps `signature` in sync) ──────
+    //
+    // `KlondikeMove::apply` goes through these helpers so that each move
+    // touches only the Zobrist keys of the cards it moves, instead of
+    // rehashing the whole board.
+
+    /// Appends a face-up card to a column.
+    #[inline]
+    pub(crate) fn push_face_up(&mut self, column: usize, card: Card) {
+        let col = &mut self.columns[column];
+        let position = col.len as usize;
+        col.cards[position] = card;
+        col.len += 1;
+        self.signature ^= column_key(column, position, true, card);
+    }
+
+    /// Removes the top face-up card of a column. Returns None if the column
+    /// has no face-up card.
+    #[inline]
+    pub(crate) fn pop_face_up(&mut self, column: usize) -> Option<Card> {
+        let col = &mut self.columns[column];
+        if col.len == 0 || col.len == col.face_down_len {
+            return None;
+        }
+        col.len -= 1;
+        let position = col.len as usize;
+        let card = col.cards[position];
+        self.signature ^= column_key(column, position, true, card);
+        Some(card)
+    }
+
+    /// Turns the top card face-up when every remaining card of the column is
+    /// face-down (the rule after moving a run away).
+    #[inline]
+    pub(crate) fn reveal_top_if_hidden(&mut self, column: usize) {
+        let col = &mut self.columns[column];
+        if col.len > 0 && col.face_down_len == col.len {
+            col.face_down_len -= 1;
+            let position = col.face_down_len as usize;
+            let card = col.cards[position];
+            self.signature ^= column_key(column, position, false, card)
+                ^ column_key(column, position, true, card);
+        }
+    }
+
+    /// Sets the highest rank of a foundation.
+    #[inline]
+    pub(crate) fn set_foundation_rank(&mut self, suit: Suit, rank: u8) {
+        let index = suit as usize;
+        self.signature ^=
+            foundation_key(index, self.foundation[index]) ^ foundation_key(index, rank);
+        self.foundation[index] = rank;
+    }
+
+    /// Moves the waste pointer.
+    #[inline]
+    pub(crate) fn set_stock_index(&mut self, stock_index: u8) {
+        self.signature ^= stock_index_key(self.stock_index) ^ stock_index_key(stock_index);
+        self.stock_index = stock_index;
+    }
+
+    /// Removes the current waste card, compacting the stock so the card below
+    /// it becomes the new waste card. Resets the recycle counter.
+    pub(crate) fn take_waste_card(&mut self) -> Option<Card> {
+        if self.stock_index == 0 || self.stock_index > self.stock_len {
+            return None;
+        }
+        let real_idx = (self.stock_index - 1) as usize;
+        let card = self.stock[real_idx];
+        for i in real_idx..self.stock_len as usize - 1 {
+            self.stock[i] = self.stock[i + 1];
+        }
+        self.stock_len -= 1;
+        // Stock cards hash by identity: their relative order never changes.
+        self.signature ^= stock_key(card);
+        self.set_stock_index(self.stock_index - 1);
+        self.stock_recycles = 0;
+        Some(card)
+    }
 }
 
 // ═══════════════════════════════════════════
-// Board signature (FNV-1a)
+// Board signature (Zobrist hashing)
 // ═══════════════════════════════════════════
+//
+// The signature is the XOR of one pseudo-random key per (card, location):
+//
+// 1. Column cards: key per (column, position, face-up?, card). Position and
+//    facing are part of the key, so the face-down/face-up boundary of each
+//    column is captured exactly as the previous FNV-1a layout did.
+// 2. Stock cards: key per card only. Cards never return to the stock and
+//    the compaction in `take_waste_card` preserves their relative order, so
+//    the set of cards still in the stock determines the whole array.
+// 3. The waste pointer: key per `stock_index` value.
+// 4. Foundations: key per (suit, highest rank), including rank 0.
+//
+// `stock_recycles` is not part of the signature, as before. Keys come from a
+// fixed-seed SplitMix64 sequence evaluated at compile time, so the hash is
+// identical on every platform and build.
 
-/// Computes an FNV-1a (Fowler-Noll-Vo) hash of the complete board state.
-///
-/// The hash includes:
-/// 1. Each column: face-down cards first (in order), then face-up cards.
-///    A separator (0xFE) distinguishes the boundary between both zones.
-/// 2. The complete stock (cards in order) plus the current position (stock_index).
-/// 3. The highest value in each foundation by suit.
-///
-/// Distinct prefixes are used per section (0x100 for columns, 0x200 for stock,
-/// 0x300 for foundations) to avoid collisions between states with the same bytes
-/// in different contexts.
-fn klondike_signature(board: &KlondikeBoard) -> u64 {
-    const FNV_OFFSET: u64 = 14695981039346656037;
-    const FNV_PRIME: u64 = 1099511628211;
-    let mut h = FNV_OFFSET;
+const COLUMN_SLOTS: usize = KlondikeBoard::NUM_COLUMNS * 21 * 2;
+const CARD_SLOTS: usize = 52;
 
-    // Tableau columns.
-    for (col_idx, col) in board.columns.iter().enumerate() {
-        h ^= (col_idx as u64).wrapping_add(0x100);
-        h = h.wrapping_mul(FNV_PRIME);
-        // Face-down cards.
-        for i in 0..col.face_down_len {
-            h ^= encode_card(col.cards[i as usize]);
-            h = h.wrapping_mul(FNV_PRIME);
-        }
-        // Face-down / face-up zone separator.
-        h ^= 0xFE;
-        h = h.wrapping_mul(FNV_PRIME);
-        // Face-up cards.
-        for i in col.face_down_len..col.len {
-            h ^= encode_card(col.cards[i as usize]);
-            h = h.wrapping_mul(FNV_PRIME);
+const fn splitmix64(state: u64) -> u64 {
+    let mut z = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+const fn zobrist_table<const N: usize>(seed: u64) -> [u64; N] {
+    let mut table = [0u64; N];
+    let mut state = seed;
+    let mut i = 0;
+    while i < N {
+        state = splitmix64(state);
+        table[i] = state;
+        i += 1;
+    }
+    table
+}
+
+static COLUMN_KEYS: [u64; COLUMN_SLOTS * CARD_SLOTS] = zobrist_table(0x4B4C_4F4E_4449_4B45); // "KLONDIKE"
+static STOCK_KEYS: [u64; CARD_SLOTS] = zobrist_table(0x5354_4F43_4B00_0001);
+static STOCK_INDEX_KEYS: [u64; 25] = zobrist_table(0x5354_4F43_4B00_0002);
+static FOUNDATION_KEYS: [u64; 4 * 14] = zobrist_table(0x464F_554E_4441_5449);
+
+/// Dense card index in 0..52. Illegal ranks (the null card) share slot 0 of
+/// their suit; they never appear in a dealt board.
+#[inline(always)]
+fn card_slot(card: Card) -> usize {
+    (card.suit as usize) * 13 + (card.value.clamp(1, 13) as usize - 1)
+}
+
+#[inline(always)]
+fn column_key(column: usize, position: usize, face_up: bool, card: Card) -> u64 {
+    let slot = ((column * 21 + position) * 2 + face_up as usize) * CARD_SLOTS + card_slot(card);
+    COLUMN_KEYS[slot]
+}
+
+#[inline(always)]
+fn stock_key(card: Card) -> u64 {
+    STOCK_KEYS[card_slot(card)]
+}
+
+#[inline(always)]
+fn stock_index_key(stock_index: u8) -> u64 {
+    STOCK_INDEX_KEYS[(stock_index as usize).min(24)]
+}
+
+#[inline(always)]
+fn foundation_key(suit: usize, rank: u8) -> u64 {
+    FOUNDATION_KEYS[suit * 14 + (rank as usize).min(13)]
+}
+
+/// Computes the Zobrist signature of the complete board state from scratch.
+pub(crate) fn klondike_signature(board: &KlondikeBoard) -> u64 {
+    let mut h = 0u64;
+    for (column, col) in board.columns.iter().enumerate() {
+        for position in 0..col.len as usize {
+            let face_up = position >= col.face_down_len as usize;
+            h ^= column_key(column, position, face_up, col.cards[position]);
         }
     }
-
-    // Separator between columns and stock.
-    h ^= 0xFD;
-    h = h.wrapping_mul(FNV_PRIME);
-
-    // Stock (cards in order + current position).
-    for i in 0..board.stock_len {
-        h ^= encode_card(board.stock[i as usize]);
-        h = h.wrapping_mul(FNV_PRIME);
+    for i in 0..board.stock_len as usize {
+        h ^= stock_key(board.stock[i]);
     }
-    h ^= (board.stock_index as u64).wrapping_add(0x200);
-    h = h.wrapping_mul(FNV_PRIME);
-
-    // Foundations
-    for (suit_idx, &val) in board.foundation.iter().enumerate() {
-        h ^= (suit_idx as u64).wrapping_add(0x300);
-        h = h.wrapping_mul(FNV_PRIME);
-        if val > 0 {
-            h ^= val as u64;
-            h = h.wrapping_mul(FNV_PRIME);
-        }
+    h ^= stock_index_key(board.stock_index);
+    for (suit, &rank) in board.foundation.iter().enumerate() {
+        h ^= foundation_key(suit, rank);
     }
     h
-}
-
-/// Encodes a card in 8 bits: [value (4 bits) | suit (4 bits)].
-/// Inline version to maximize performance in the signature loop.
-#[inline(always)]
-fn encode_card(card: Card) -> u64 {
-    let suit_val: u64 = card.suit as u64;
-    ((card.value as u64) << 4) | suit_val
 }
 
 // ═══════════════════════════════════════════
@@ -474,6 +581,88 @@ mod tests {
 
         board.stock_index = 3;
         assert_eq!(board.stock_pile_card(), None);
+    }
+
+    #[test]
+    fn incremental_mutations_keep_the_signature_in_sync() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Club, 9), true);
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        board.columns[1].push(card(Suit::Spade, 7), false);
+        board.stock[0] = card(Suit::Diamond, 2);
+        board.stock[1] = card(Suit::Club, 5);
+        board.stock[2] = card(Suit::Heart, 6);
+        board.stock_len = 3;
+        board.stock_index = 2;
+        board.foundation = [1, 0, 0, 0];
+        board.compute_signature();
+        let check = |board: &KlondikeBoard| assert_eq!(board.signature, klondike_signature(board));
+
+        // Column push / pop / reveal.
+        board.push_face_up(1, card(Suit::Heart, 6));
+        check(&board);
+        assert_eq!(board.pop_face_up(1), Some(card(Suit::Heart, 6)));
+        check(&board);
+        assert_eq!(board.pop_face_up(0), Some(card(Suit::Heart, 8)));
+        check(&board);
+        assert_eq!(board.columns[0].face_down_len, 1);
+        board.reveal_top_if_hidden(0);
+        check(&board);
+        assert_eq!(board.columns[0].face_down_len, 0);
+        assert_eq!(board.pop_face_up(0), Some(card(Suit::Club, 9)));
+        assert_eq!(board.pop_face_up(0), None);
+        check(&board);
+
+        // Foundation and stock pointer.
+        board.set_foundation_rank(Suit::Club, 2);
+        check(&board);
+        board.set_stock_index(3);
+        check(&board);
+        board.set_stock_index(0);
+        check(&board);
+
+        // Waste removal compacts and re-hashes only the removed card.
+        board.set_stock_index(2);
+        assert_eq!(board.take_waste_card(), Some(card(Suit::Club, 5)));
+        check(&board);
+        assert_eq!(board.stock_len, 2);
+        assert_eq!(board.stock_index, 1);
+        assert_eq!(board.stock[1], card(Suit::Heart, 6));
+        assert_eq!(board.take_waste_card(), Some(card(Suit::Diamond, 2)));
+        check(&board);
+        assert_eq!(board.take_waste_card(), None);
+    }
+
+    #[test]
+    fn signature_distinguishes_facing_position_column_and_stock_pointer() {
+        let base = KlondikeBoard::new();
+        assert_eq!(base.signature, klondike_signature(&base));
+
+        let mut face_down = base;
+        face_down.columns[0].push(card(Suit::Club, 9), true);
+        face_down.compute_signature();
+        let mut face_up = base;
+        face_up.columns[0].push(card(Suit::Club, 9), false);
+        face_up.compute_signature();
+        assert_ne!(face_down.signature, face_up.signature);
+
+        let mut other_column = base;
+        other_column.columns[1].push(card(Suit::Club, 9), false);
+        other_column.compute_signature();
+        assert_ne!(face_up.signature, other_column.signature);
+
+        let mut pointer = base;
+        pointer.stock[0] = card(Suit::Club, 9);
+        pointer.stock_len = 1;
+        pointer.compute_signature();
+        let with_pointer = {
+            let mut b = pointer;
+            b.stock_index = 1;
+            b.compute_signature();
+            b
+        };
+        assert_ne!(pointer.signature, with_pointer.signature);
+        assert_ne!(pointer.signature, face_up.signature);
     }
 
     #[test]
