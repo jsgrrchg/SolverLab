@@ -899,12 +899,8 @@ fn successor_order_key(
     let crit_bonus = critical_path_bonus(transition, ordering);
     let safe = is_safe_foundation_move(transition, from_board);
     let bucket = successor_bucket(transition, from_board, revealed_delta, safe);
-    let secondary = local_secondary_priority(
-        transition,
-        from_board,
-        exposed_bonus + thoughtful_bonus + crit_bonus,
-        safe,
-    );
+    let secondary =
+        local_secondary_priority(transition, exposed_bonus + thoughtful_bonus + crit_bonus, safe);
     (bucket, std::cmp::Reverse(secondary))
 }
 
@@ -964,7 +960,6 @@ fn successor_bucket(
 
 fn local_secondary_priority(
     transition: &KlondikeTransition,
-    from_board: &KlondikeBoard,
     exposed_bonus: i64,
     safe_foundation: bool,
 ) -> i64 {
@@ -980,19 +975,16 @@ fn local_secondary_priority(
     if m.is_from_foundation() {
         return weights::PRIORITY_FROM_FOUNDATION;
     }
-    if m.is_stock_advance() {
-        return weights::PRIORITY_STOCK_ADVANCE + exposed_bonus;
-    }
-    if m.is_stock_recycle() {
-        return weights::PRIORITY_STOCK_RECYCLE - draw_cost;
+    // Stock advances and recycles each own a bucket, so only the draw cost
+    // can order them; a base priority would be a shared constant.
+    if m.is_stock_advance() || m.is_stock_recycle() {
+        return -draw_cost;
     }
 
+    // Moves that empty a column also own a bucket: no bonus for it here.
     let mut score = weights::PRIORITY_COLUMN_BASE + exposed_bonus - draw_cost;
     if let KlondikeMove::ColumnToColumn { count, .. } = m {
         score += (*count as i64).saturating_sub(1) * weights::PRIORITY_STACK_BONUS;
-        if creates_empty_column(transition, from_board) {
-            score += weights::PRIORITY_EMPTY_COL_BONUS;
-        }
     }
     score
 }
@@ -1400,6 +1392,46 @@ mod tests {
             for m in candidates {
                 assert!(transitions.iter().any(|t| t.the_move == m));
             }
+        }
+    }
+
+    #[test]
+    fn single_kind_buckets_carry_no_base_secondary_priority() {
+        // Column 0 holds a lone 5♥ that can leave for the 6♣ in column 1,
+        // emptying its column. The stock has one unreachable card past the
+        // pile, so the only stock macro is a one-advance recycle.
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Heart, 5), false);
+        board.columns[1].push(card(Suit::Club, 6), false);
+        board.stock[0] = card(Suit::Diamond, 2);
+        board.stock[1] = card(Suit::Spade, 9);
+        board.stock_len = 2;
+        board.stock_index = 1;
+        board.compute_signature();
+
+        let empties_column = KlondikeMove::ColumnToColumn {
+            source: 0,
+            destination: 1,
+            count: 1,
+        };
+        for draw in [1, 3] {
+            let recycle = KlondikeMove::StockDrawRecycle {
+                advances: 1,
+                increment: draw as u8,
+            };
+            let transitions = KlondikeSolver::new(draw).successors(&board, None, 0);
+            let ordering = OrderingContext::new(&board);
+            let key = |m| {
+                let transition = transitions.iter().find(|t| t.the_move == m).unwrap();
+                let (bucket, std::cmp::Reverse(secondary)) =
+                    successor_order_key(transition, &board, &ordering);
+                (bucket, secondary)
+            };
+
+            // Emptying a column: its own bucket, plain column priority.
+            assert_eq!(key(empties_column), (2, weights::PRIORITY_COLUMN_BASE));
+            // Recycle: its own bucket, ordered by the folded advances alone.
+            assert_eq!(key(recycle), (6, -weights::PRIORITY_DRAW_COST));
         }
     }
 

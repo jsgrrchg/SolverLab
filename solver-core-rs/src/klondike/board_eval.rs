@@ -247,13 +247,13 @@ impl BoardEval {
                         // It is the current pile card: accessible now, no penalty.
                     } else if pos < si {
                         // In waste (already passed): requires recycle.
-                        stock_target_penalty += STOCK_WASTE_TARGET_PENALTY as i64;
+                        stock_target_penalty += STOCK_WASTE_TARGET_PENALTY;
                     } else if da > 1 {
                         // In remaining stock: check alignment with draw_advance.
                         let offset = pos - si + 1;
                         if offset % da != 0 {
                             // Misaligned: not accessible in this pass.
-                            stock_target_penalty += STOCK_MISALIGNED_TARGET_PENALTY as i64;
+                            stock_target_penalty += STOCK_MISALIGNED_TARGET_PENALTY;
                         }
                     }
                     break;
@@ -266,8 +266,10 @@ impl BoardEval {
     }
 
     /// Heuristic cost for IDA* (scale ~0-80+, lower is better).
-    /// Maintains admissibility: never overestimates the real cost.
-    /// Thoughtful signals are NOT included here to preserve admissibility.
+    /// Informative, not admissible: the penalty terms overestimate the real
+    /// remaining move count, which trades optimality for search speed.
+    /// Thoughtful signals are NOT included here: they need the face-down
+    /// cards and are too expensive for the hot path.
     pub fn heuristic_cost(&self) -> i64 {
         // Auto-play detection: if there are no hidden cards and no stock, the game is won.
         if self.hidden == 0 && self.stock_remaining == 0 && self.waste_count == 0 {
@@ -308,7 +310,9 @@ impl BoardEval {
         // Do NOT add target_burial_penalty or deadlock_count here.
         // Those signals belong ONLY in progress_score and successor_ordering.
 
-        cost
+        // Several empty columns next to an almost complete foundation can push
+        // the sum below zero; a negative bound has no meaning.
+        cost.max(0)
     }
 
     /// Progress score for checkpoints (higher is better).
