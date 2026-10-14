@@ -429,19 +429,20 @@ impl CheckpointPolicy {
     /// Decides whether a progress delta is adoptable given the current phase.
     /// `foundation_count`: real number of cards in foundations (not derived from score).
     pub fn is_adoptable(&self, start_score: i64, best_score: i64, foundation_count: usize) -> bool {
-        let delta = best_score - start_score;
+        best_score - start_score >= Self::adopt_threshold(foundation_count)
+    }
 
+    /// Progress required to adopt a checkpoint, by foundation count.
+    pub fn adopt_threshold(foundation_count: usize) -> i64 {
         let fc = foundation_count as i64;
-        let (clamp_min, clamp_max) = if fc < ADOPT_EARLY_THRESHOLD_FC {
-            ADOPT_EARLY_CLAMP
+        let scaled = fc * ADOPT_PER_FOUNDATION_CARD;
+        if fc < ADOPT_EARLY_THRESHOLD_FC {
+            scaled.max(ADOPT_EARLY_MIN)
         } else if fc < ADOPT_MID_THRESHOLD_FC {
-            ADOPT_MID_CLAMP
+            scaled.min(ADOPT_MID_MAX)
         } else {
-            ADOPT_LATE_CLAMP
-        };
-        let relative_threshold = (start_score.saturating_abs() * ADOPT_RELATIVE_PCT) / 100;
-        let adopt_threshold = relative_threshold.clamp(clamp_min, clamp_max);
-        delta >= adopt_threshold
+            ADOPT_LATE
+        }
     }
 }
 
@@ -727,16 +728,36 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_adopt_threshold_grows_with_foundation_count_within_phase_bounds() {
+        // Early: floor until the slope passes it.
+        assert_eq!(CheckpointPolicy::adopt_threshold(0), 150);
+        assert_eq!(CheckpointPolicy::adopt_threshold(3), 150);
+        assert_eq!(CheckpointPolicy::adopt_threshold(4), 156);
+        assert_eq!(CheckpointPolicy::adopt_threshold(9), 351);
+        // Mid: slope until the cap.
+        assert_eq!(CheckpointPolicy::adopt_threshold(10), 390);
+        assert_eq!(CheckpointPolicy::adopt_threshold(25), 975);
+        assert_eq!(CheckpointPolicy::adopt_threshold(26), 1000);
+        assert_eq!(CheckpointPolicy::adopt_threshold(29), 1000);
+        // Late: fixed.
+        assert_eq!(CheckpointPolicy::adopt_threshold(30), 500);
+        assert_eq!(CheckpointPolicy::adopt_threshold(51), 500);
+    }
+
+    #[test]
     fn checkpoint_policy_is_adoptable_uses_phase_thresholds() {
         let policy = CheckpointPolicy::for_draw(1);
 
-        assert!(!policy.is_adoptable(1_000, 1_100, 0));
+        // The start score itself does not matter, only the delta.
+        assert!(!policy.is_adoptable(1_000, 1_149, 0));
         assert!(policy.is_adoptable(1_000, 1_150, 0));
+        assert!(!policy.is_adoptable(-7_000, -6_851, 0));
+        assert!(policy.is_adoptable(-7_000, -6_850, 0));
 
-        assert!(!policy.is_adoptable(1_000, 1_090, 10));
-        assert!(policy.is_adoptable(1_000, 1_100, 10));
+        assert!(!policy.is_adoptable(13_000, 13_389, 10));
+        assert!(policy.is_adoptable(13_000, 13_390, 10));
 
-        assert!(!policy.is_adoptable(100, 119, 30));
-        assert!(policy.is_adoptable(100, 120, 30));
+        assert!(!policy.is_adoptable(40_000, 40_499, 30));
+        assert!(policy.is_adoptable(40_000, 40_500, 30));
     }
 }

@@ -150,26 +150,30 @@ pub const PRIORITY_STACK_BONUS: i64 = 20;
 /// nearer waste cards are explored first.
 pub const PRIORITY_DRAW_COST: i64 = 15;
 
-/// ── Checkpoint Adoption ─────────────────────────
-/// Defines the progress required to adopt a checkpoint.
+// ── Checkpoint Adoption ─────────────────────────
+// Progress (in progress_score points) a chunk must gain for its best board to
+// be adopted as the next checkpoint. The threshold grows with the foundation
+// count and is bounded per phase. For scale: a reveal is worth about 410
+// points and a foundation move about 1190.
 
-/// Early phase (fc < 10): adoption-threshold clamps.
-pub const ADOPT_EARLY_CLAMP: (i64, i64) = (150, 1500);
+/// Threshold slope: points of required progress per foundation card.
+pub const ADOPT_PER_FOUNDATION_CARD: i64 = 39;
 
-/// Mid phase (10 <= fc < 30): adoption-threshold clamps.
-pub const ADOPT_MID_CLAMP: (i64, i64) = (100, 1000);
+/// Early phase (fc < ADOPT_EARLY_THRESHOLD_FC): floor of the threshold.
+pub const ADOPT_EARLY_MIN: i64 = 150;
 
-/// Late phase (fc >= 30): adoption-threshold clamps.
-pub const ADOPT_LATE_CLAMP: (i64, i64) = (20, 500);
+/// Mid phase (ADOPT_EARLY_THRESHOLD_FC <= fc < ADOPT_MID_THRESHOLD_FC): cap
+/// of the threshold.
+pub const ADOPT_MID_MAX: i64 = 1000;
+
+/// Late phase (fc >= ADOPT_MID_THRESHOLD_FC): fixed threshold.
+pub const ADOPT_LATE: i64 = 500;
 
 /// fc threshold for considering the position earlygame.
 pub const ADOPT_EARLY_THRESHOLD_FC: i64 = 10;
 
 /// fc threshold for considering the position midgame.
 pub const ADOPT_MID_THRESHOLD_FC: i64 = 30;
-
-/// Percentage relative to the initial score for calculating the base threshold.
-pub const ADOPT_RELATIVE_PCT: i64 = 3;
 
 /// ── Checkpoint Policy / Limits ──────────────────
 /// Defines the node limit for each board difficulty.
