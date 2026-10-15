@@ -38,6 +38,11 @@ pub const IMBALANCE_WEIGHT: i64 = 4;
 /// number of advances needed to reach every remaining stock card. Adjustable.
 pub const STOCK_ADVANCE_DIVISOR: i64 = 2;
 
+/// Cost per next-foundation card sitting in the remaining stock at a position
+/// the current pass cannot reach. Only Draw 3 (and any draw > 1) skips stock
+/// positions; Draw 1 reaches every card, so the term is always zero there.
+pub const MISALIGNED_TARGET_COST: i64 = 2;
+
 // ── Thoughtful Heuristics ──────────────────────
 // These signals use knowledge of face-down cards and are NOT used in
 // heuristic_cost (the IDA* hot path), only in progress_score and successor

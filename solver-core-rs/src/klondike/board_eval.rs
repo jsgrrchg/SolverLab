@@ -26,6 +26,7 @@ pub struct BoardEval {
     pub foundation_imbalance: i64, // max_rank - min_rank (raw, no tolerance)
     pub depth_penalty: i64,        // sum of fd + (fd-1)/DIVISOR per column
     pub stock_advance_cost: i64,   // minimum advances needed to access the stock
+    pub misaligned_targets: i64,   // next foundation cards the current stock pass skips (draw > 1)
     pub target_burial_penalty: i64, // penalty for face-down target cards
     pub deadlock_count: i64,       // same-suit hidden dependency severity, not proven deadlocks
     pub reveal_bonus: i64,         // bonus for exposing a key card
@@ -98,6 +99,28 @@ impl BoardEval {
             0
         };
 
+        // Misaligned targets: next foundation cards in the remaining stock that
+        // this pass skips. A pass exposes the cards at offsets da, 2da, ... from
+        // the current pile card, plus the last card of the stock. A skipped
+        // target stays out of reach until a card is played from the stock
+        // before it, which shifts the alignment.
+        let mut misaligned_targets = 0i64;
+        if da > 1 {
+            let da = da as usize;
+            let si = board.stock_index as usize;
+            let len = board.stock_len as usize;
+            for pos in si..len {
+                let card = board.stock[pos];
+                if card.value != board.foundation[card.suit as usize] + 1 {
+                    continue;
+                }
+                let offset = pos - si + 1;
+                if offset % da != 0 && pos + 1 != len {
+                    misaligned_targets += 1;
+                }
+            }
+        }
+
         Self {
             foundation_count,
             face_up,
@@ -109,6 +132,7 @@ impl BoardEval {
             foundation_imbalance: max_rank - min_rank,
             depth_penalty,
             stock_advance_cost,
+            misaligned_targets,
             target_burial_penalty: 0,
             deadlock_count: 0,
             reveal_bonus: 0,
@@ -306,6 +330,9 @@ impl BoardEval {
 
         // Stock advance cost.
         cost += self.stock_advance_cost / STOCK_ADVANCE_DIVISOR;
+
+        // Draw 3: targets the current stock pass skips.
+        cost += self.misaligned_targets * MISALIGNED_TARGET_COST;
 
         // Do NOT add target_burial_penalty or deadlock_count here.
         // Those signals belong ONLY in progress_score and successor_ordering.
@@ -532,6 +559,67 @@ mod tests {
         assert_eq!(draw_one.stock_advance_cost, 6);
         assert_eq!(draw_three.stock_remaining, 6);
         assert_eq!(draw_three.stock_advance_cost, 2);
+    }
+
+    #[test]
+    fn misaligned_targets_count_skipped_foundation_cards_in_draw_three_only() {
+        // One hidden card keeps heuristic_cost on its main branch.
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Spade, 9), true);
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        // Pile card at 0. With draw 3 the pass exposes positions 3 and the
+        // last card (5); positions 1, 2 and 4 are skipped.
+        set_stock(
+            &mut board,
+            &[
+                card(Suit::Spade, 13),
+                card(Suit::Club, 1),    // skipped
+                card(Suit::Spade, 10),  //
+                card(Suit::Diamond, 1), // exposed
+                card(Suit::Heart, 10),  //
+                card(Suit::Heart, 1),   // last card: always exposed
+            ],
+            1,
+        );
+
+        let draw_one = BoardEval::from_board_fast(&board, 1);
+        let mut draw_three = BoardEval::from_board_fast(&board, 3);
+        assert_eq!(draw_one.misaligned_targets, 0);
+        assert_eq!(draw_three.misaligned_targets, 1);
+
+        let with_term = draw_three.heuristic_cost();
+        draw_three.misaligned_targets = 0;
+        assert_eq!(with_term, draw_three.heuristic_cost() + MISALIGNED_TARGET_COST);
+
+        // Playing the pile card shifts the alignment: A♣ becomes the pile
+        // card and A♦ (offset 2 from the new pile) is now the skipped one.
+        board.stock_index = 2;
+        board.compute_signature();
+        assert_eq!(BoardEval::from_board_fast(&board, 3).misaligned_targets, 1);
+
+        // A foundation that no longer needs the card stops counting it.
+        board.stock_index = 1;
+        board.foundation[Suit::Club as usize] = 1;
+        board.compute_signature();
+        assert_eq!(BoardEval::from_board_fast(&board, 3).misaligned_targets, 0);
+    }
+
+    #[test]
+    fn misaligned_targets_do_not_affect_the_endgame_heuristic() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        set_stock(
+            &mut board,
+            &[card(Suit::Spade, 13), card(Suit::Club, 1), card(Suit::Spade, 10)],
+            1,
+        );
+
+        let mut eval = BoardEval::from_board_fast(&board, 3);
+        assert_eq!(eval.hidden, 0);
+        assert_eq!(eval.misaligned_targets, 1);
+        let cost = eval.heuristic_cost();
+        eval.misaligned_targets = 0;
+        assert_eq!(cost, eval.heuristic_cost());
     }
 
     #[test]
