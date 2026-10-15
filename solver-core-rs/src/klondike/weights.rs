@@ -2,8 +2,12 @@
 //! Centralized to simplify tuning and avoid scattered literals.
 
 // ── Heuristic Cost ──────────────────────────────
+// Informative heuristic, NOT admissible: the depth, blocked-King, waste and
+// imbalance terms all overestimate the real remaining move count. The solver
+// does not look for optimal paths (checkpoints and node limits already give
+// that up), so these weights may be tuned freely for search speed.
 
-/// Divisor for burial depth bonus, formula: cost += fd + (fd - 1) * MULTIPLIER.
+/// Divisor for the burial depth term, per column: cost += fd + (fd - 1) / DIVISOR.
 pub const HIDDEN_DEPTH_DIVISOR: i64 = 2;
 
 /// Empty-column bonus with diminishing returns (index = min(empty_cols, 4)).
@@ -30,21 +34,23 @@ pub const IMBALANCE_TOLERANCE: i64 = 2;
 /// Multiplier weight for foundation imbalance.
 pub const IMBALANCE_WEIGHT: i64 = 4;
 
-/// Divisor for stock advance cost in heuristic_cost (endgame path: hidden==0).
-/// Conservative (/2) to avoid overestimation (real cost = stock_remaining).
+/// Divisor for the stock advance term in heuristic_cost: half of the minimum
+/// number of advances needed to reach every remaining stock card. Adjustable.
 pub const STOCK_ADVANCE_DIVISOR: i64 = 2;
 
+/// Cost per next-foundation card sitting in the remaining stock at a position
+/// the current pass cannot reach. Only Draw 3 (and any draw > 1) skips stock
+/// positions; Draw 1 reaches every card, so the term is always zero there.
+pub const MISALIGNED_TARGET_COST: i64 = 2;
+
 // ── Thoughtful Heuristics ──────────────────────
-// These signals are NOT used in heuristic_cost (admissibility),
-// only in progress_score and successor ordering.
+// These signals use knowledge of face-down cards and are NOT used in
+// heuristic_cost (the IDA* hot path), only in progress_score and successor
+// ordering.
 
 /// Multiplier penalty if a "target" card is face-down.
 /// Only used in progress_score via PROGRESS_BURIAL_WEIGHT.
 pub const BURIED_TARGET_PENALTY: i64 = 2;
-
-/// Penalty for a logical face-down deadlock, weighted by severity.
-/// Only used in progress_score via PROGRESS_DEADLOCK_WEIGHT.
-pub const DEADLOCK_PENALTY: i64 = 1;
 
 /// Ordering bonus when a move reveals the exact target card.
 /// Only affects exploration order, not IDA* admissibility.
@@ -124,8 +130,14 @@ pub const AUTOPLAY_PROXIMITY_THRESHOLD: i64 = 7;
 /// Rewards uncovering cards; remaining stock can still prevent a win at hidden == 0.
 pub const PROGRESS_AUTOPLAY_PROXIMITY: i64 = 100;
 
-/// Secondary priority for safe foundation moves.
-pub const PRIORITY_SAFE_FOUNDATION: i64 = 600; // Restored.
+// Secondary priorities only order moves inside the same bucket of
+// `successor_bucket`. Move kinds that have a bucket of their own (stock
+// recycles, moves that empty a column) carry no base priority: a constant
+// offset shared by every move of the bucket never changes the order.
+
+/// Secondary priority for safe foundation moves. Competes with other reveals
+/// in the reveal bucket.
+pub const PRIORITY_SAFE_FOUNDATION: i64 = 600;
 
 /// Secondary priority for moves to foundation (not safe).
 pub const PRIORITY_TO_FOUNDATION: i64 = 500;
@@ -133,45 +145,40 @@ pub const PRIORITY_TO_FOUNDATION: i64 = 500;
 /// Secondary priority for moves from foundation.
 pub const PRIORITY_FROM_FOUNDATION: i64 = 100;
 
-/// Base secondary priority for stock advance.
-pub const PRIORITY_STOCK_ADVANCE: i64 = 120;
-
-/// Secondary priority for stock recycle.
-pub const PRIORITY_STOCK_RECYCLE: i64 = 10;
-
 /// Base secondary priority for column moves.
 pub const PRIORITY_COLUMN_BASE: i64 = 100;
 
 /// Secondary bonus for each additional card in the moved stack.
 pub const PRIORITY_STACK_BONUS: i64 = 20;
 
-/// Secondary bonus for creating an empty column in C2C.
-pub const PRIORITY_EMPTY_COL_BONUS: i64 = 300;
-
 /// Secondary penalty per stock advance folded into a stock macro move:
 /// nearer waste cards are explored first.
 pub const PRIORITY_DRAW_COST: i64 = 15;
 
-/// ── Checkpoint Adoption ─────────────────────────
-/// Defines the progress required to adopt a checkpoint.
+// ── Checkpoint Adoption ─────────────────────────
+// Progress (in progress_score points) a chunk must gain for its best board to
+// be adopted as the next checkpoint. The threshold grows with the foundation
+// count and is bounded per phase. For scale: a reveal is worth about 410
+// points and a foundation move about 1190.
 
-/// Early phase (fc < 10): adoption-threshold clamps.
-pub const ADOPT_EARLY_CLAMP: (i64, i64) = (150, 1500);
+/// Threshold slope: points of required progress per foundation card.
+pub const ADOPT_PER_FOUNDATION_CARD: i64 = 39;
 
-/// Mid phase (10 <= fc < 30): adoption-threshold clamps.
-pub const ADOPT_MID_CLAMP: (i64, i64) = (100, 1000);
+/// Early phase (fc < ADOPT_EARLY_THRESHOLD_FC): floor of the threshold.
+pub const ADOPT_EARLY_MIN: i64 = 150;
 
-/// Late phase (fc >= 30): adoption-threshold clamps.
-pub const ADOPT_LATE_CLAMP: (i64, i64) = (20, 500);
+/// Mid phase (ADOPT_EARLY_THRESHOLD_FC <= fc < ADOPT_MID_THRESHOLD_FC): cap
+/// of the threshold.
+pub const ADOPT_MID_MAX: i64 = 1000;
+
+/// Late phase (fc >= ADOPT_MID_THRESHOLD_FC): fixed threshold.
+pub const ADOPT_LATE: i64 = 500;
 
 /// fc threshold for considering the position earlygame.
 pub const ADOPT_EARLY_THRESHOLD_FC: i64 = 10;
 
 /// fc threshold for considering the position midgame.
 pub const ADOPT_MID_THRESHOLD_FC: i64 = 30;
-
-/// Percentage relative to the initial score for calculating the base threshold.
-pub const ADOPT_RELATIVE_PCT: i64 = 3;
 
 /// ── Checkpoint Policy / Limits ──────────────────
 /// Defines the node limit for each board difficulty.

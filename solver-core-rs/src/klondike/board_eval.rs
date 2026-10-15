@@ -26,6 +26,7 @@ pub struct BoardEval {
     pub foundation_imbalance: i64, // max_rank - min_rank (raw, no tolerance)
     pub depth_penalty: i64,        // sum of fd + (fd-1)/DIVISOR per column
     pub stock_advance_cost: i64,   // minimum advances needed to access the stock
+    pub misaligned_targets: i64,   // next foundation cards the current stock pass skips (draw > 1)
     pub target_burial_penalty: i64, // penalty for face-down target cards
     pub deadlock_count: i64,       // same-suit hidden dependency severity, not proven deadlocks
     pub reveal_bonus: i64,         // bonus for exposing a key card
@@ -98,6 +99,28 @@ impl BoardEval {
             0
         };
 
+        // Misaligned targets: next foundation cards in the remaining stock that
+        // this pass skips. A pass exposes the cards at offsets da, 2da, ... from
+        // the current pile card, plus the last card of the stock. A skipped
+        // target stays out of reach until a card is played from the stock
+        // before it, which shifts the alignment.
+        let mut misaligned_targets = 0i64;
+        if da > 1 {
+            let da = da as usize;
+            let si = board.stock_index as usize;
+            let len = board.stock_len as usize;
+            for pos in si..len {
+                let card = board.stock[pos];
+                if card.value != board.foundation[card.suit as usize] + 1 {
+                    continue;
+                }
+                let offset = pos - si + 1;
+                if offset % da != 0 && pos + 1 != len {
+                    misaligned_targets += 1;
+                }
+            }
+        }
+
         Self {
             foundation_count,
             face_up,
@@ -109,6 +132,7 @@ impl BoardEval {
             foundation_imbalance: max_rank - min_rank,
             depth_penalty,
             stock_advance_cost,
+            misaligned_targets,
             target_burial_penalty: 0,
             deadlock_count: 0,
             reveal_bonus: 0,
@@ -247,13 +271,13 @@ impl BoardEval {
                         // It is the current pile card: accessible now, no penalty.
                     } else if pos < si {
                         // In waste (already passed): requires recycle.
-                        stock_target_penalty += STOCK_WASTE_TARGET_PENALTY as i64;
+                        stock_target_penalty += STOCK_WASTE_TARGET_PENALTY;
                     } else if da > 1 {
                         // In remaining stock: check alignment with draw_advance.
                         let offset = pos - si + 1;
                         if offset % da != 0 {
                             // Misaligned: not accessible in this pass.
-                            stock_target_penalty += STOCK_MISALIGNED_TARGET_PENALTY as i64;
+                            stock_target_penalty += STOCK_MISALIGNED_TARGET_PENALTY;
                         }
                     }
                     break;
@@ -266,8 +290,10 @@ impl BoardEval {
     }
 
     /// Heuristic cost for IDA* (scale ~0-80+, lower is better).
-    /// Maintains admissibility: never overestimates the real cost.
-    /// Thoughtful signals are NOT included here to preserve admissibility.
+    /// Informative, not admissible: the penalty terms overestimate the real
+    /// remaining move count, which trades optimality for search speed.
+    /// Thoughtful signals are NOT included here: they need the face-down
+    /// cards and are too expensive for the hot path.
     pub fn heuristic_cost(&self) -> i64 {
         // Auto-play detection: if there are no hidden cards and no stock, the game is won.
         if self.hidden == 0 && self.stock_remaining == 0 && self.waste_count == 0 {
@@ -305,10 +331,15 @@ impl BoardEval {
         // Stock advance cost.
         cost += self.stock_advance_cost / STOCK_ADVANCE_DIVISOR;
 
+        // Draw 3: targets the current stock pass skips.
+        cost += self.misaligned_targets * MISALIGNED_TARGET_COST;
+
         // Do NOT add target_burial_penalty or deadlock_count here.
         // Those signals belong ONLY in progress_score and successor_ordering.
 
-        cost
+        // Several empty columns next to an almost complete foundation can push
+        // the sum below zero; a negative bound has no meaning.
+        cost.max(0)
     }
 
     /// Progress score for checkpoints (higher is better).
@@ -425,19 +456,20 @@ impl CheckpointPolicy {
     /// Decides whether a progress delta is adoptable given the current phase.
     /// `foundation_count`: real number of cards in foundations (not derived from score).
     pub fn is_adoptable(&self, start_score: i64, best_score: i64, foundation_count: usize) -> bool {
-        let delta = best_score - start_score;
+        best_score - start_score >= Self::adopt_threshold(foundation_count)
+    }
 
+    /// Progress required to adopt a checkpoint, by foundation count.
+    pub fn adopt_threshold(foundation_count: usize) -> i64 {
         let fc = foundation_count as i64;
-        let (clamp_min, clamp_max) = if fc < ADOPT_EARLY_THRESHOLD_FC {
-            ADOPT_EARLY_CLAMP
+        let scaled = fc * ADOPT_PER_FOUNDATION_CARD;
+        if fc < ADOPT_EARLY_THRESHOLD_FC {
+            scaled.max(ADOPT_EARLY_MIN)
         } else if fc < ADOPT_MID_THRESHOLD_FC {
-            ADOPT_MID_CLAMP
+            scaled.min(ADOPT_MID_MAX)
         } else {
-            ADOPT_LATE_CLAMP
-        };
-        let relative_threshold = (start_score.saturating_abs() * ADOPT_RELATIVE_PCT) / 100;
-        let adopt_threshold = relative_threshold.clamp(clamp_min, clamp_max);
-        delta >= adopt_threshold
+            ADOPT_LATE
+        }
     }
 }
 
@@ -527,6 +559,67 @@ mod tests {
         assert_eq!(draw_one.stock_advance_cost, 6);
         assert_eq!(draw_three.stock_remaining, 6);
         assert_eq!(draw_three.stock_advance_cost, 2);
+    }
+
+    #[test]
+    fn misaligned_targets_count_skipped_foundation_cards_in_draw_three_only() {
+        // One hidden card keeps heuristic_cost on its main branch.
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Spade, 9), true);
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        // Pile card at 0. With draw 3 the pass exposes positions 3 and the
+        // last card (5); positions 1, 2 and 4 are skipped.
+        set_stock(
+            &mut board,
+            &[
+                card(Suit::Spade, 13),
+                card(Suit::Club, 1),    // skipped
+                card(Suit::Spade, 10),  //
+                card(Suit::Diamond, 1), // exposed
+                card(Suit::Heart, 10),  //
+                card(Suit::Heart, 1),   // last card: always exposed
+            ],
+            1,
+        );
+
+        let draw_one = BoardEval::from_board_fast(&board, 1);
+        let mut draw_three = BoardEval::from_board_fast(&board, 3);
+        assert_eq!(draw_one.misaligned_targets, 0);
+        assert_eq!(draw_three.misaligned_targets, 1);
+
+        let with_term = draw_three.heuristic_cost();
+        draw_three.misaligned_targets = 0;
+        assert_eq!(with_term, draw_three.heuristic_cost() + MISALIGNED_TARGET_COST);
+
+        // Playing the pile card shifts the alignment: A♣ becomes the pile
+        // card and A♦ (offset 2 from the new pile) is now the skipped one.
+        board.stock_index = 2;
+        board.compute_signature();
+        assert_eq!(BoardEval::from_board_fast(&board, 3).misaligned_targets, 1);
+
+        // A foundation that no longer needs the card stops counting it.
+        board.stock_index = 1;
+        board.foundation[Suit::Club as usize] = 1;
+        board.compute_signature();
+        assert_eq!(BoardEval::from_board_fast(&board, 3).misaligned_targets, 0);
+    }
+
+    #[test]
+    fn misaligned_targets_do_not_affect_the_endgame_heuristic() {
+        let mut board = KlondikeBoard::new();
+        board.columns[0].push(card(Suit::Heart, 8), false);
+        set_stock(
+            &mut board,
+            &[card(Suit::Spade, 13), card(Suit::Club, 1), card(Suit::Spade, 10)],
+            1,
+        );
+
+        let mut eval = BoardEval::from_board_fast(&board, 3);
+        assert_eq!(eval.hidden, 0);
+        assert_eq!(eval.misaligned_targets, 1);
+        let cost = eval.heuristic_cost();
+        eval.misaligned_targets = 0;
+        assert_eq!(cost, eval.heuristic_cost());
     }
 
     #[test]
@@ -723,16 +816,36 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_adopt_threshold_grows_with_foundation_count_within_phase_bounds() {
+        // Early: floor until the slope passes it.
+        assert_eq!(CheckpointPolicy::adopt_threshold(0), 150);
+        assert_eq!(CheckpointPolicy::adopt_threshold(3), 150);
+        assert_eq!(CheckpointPolicy::adopt_threshold(4), 156);
+        assert_eq!(CheckpointPolicy::adopt_threshold(9), 351);
+        // Mid: slope until the cap.
+        assert_eq!(CheckpointPolicy::adopt_threshold(10), 390);
+        assert_eq!(CheckpointPolicy::adopt_threshold(25), 975);
+        assert_eq!(CheckpointPolicy::adopt_threshold(26), 1000);
+        assert_eq!(CheckpointPolicy::adopt_threshold(29), 1000);
+        // Late: fixed.
+        assert_eq!(CheckpointPolicy::adopt_threshold(30), 500);
+        assert_eq!(CheckpointPolicy::adopt_threshold(51), 500);
+    }
+
+    #[test]
     fn checkpoint_policy_is_adoptable_uses_phase_thresholds() {
         let policy = CheckpointPolicy::for_draw(1);
 
-        assert!(!policy.is_adoptable(1_000, 1_100, 0));
+        // The start score itself does not matter, only the delta.
+        assert!(!policy.is_adoptable(1_000, 1_149, 0));
         assert!(policy.is_adoptable(1_000, 1_150, 0));
+        assert!(!policy.is_adoptable(-7_000, -6_851, 0));
+        assert!(policy.is_adoptable(-7_000, -6_850, 0));
 
-        assert!(!policy.is_adoptable(1_000, 1_090, 10));
-        assert!(policy.is_adoptable(1_000, 1_100, 10));
+        assert!(!policy.is_adoptable(13_000, 13_389, 10));
+        assert!(policy.is_adoptable(13_000, 13_390, 10));
 
-        assert!(!policy.is_adoptable(100, 119, 30));
-        assert!(policy.is_adoptable(100, 120, 30));
+        assert!(!policy.is_adoptable(40_000, 40_499, 30));
+        assert!(policy.is_adoptable(40_000, 40_500, 30));
     }
 }
